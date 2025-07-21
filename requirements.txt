@@ -1,0 +1,14 @@
+flask
+beautifulsoup4
+requests
+selenium
+openai
+notion-client
+python-dotenv
+tqdm
+pandas
+webdriver-manager
+urllib3
+certifi
+idna
+charset-normalizer
