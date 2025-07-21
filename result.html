@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head><title>TrackTect Results</title></head>
+<body>
+  <h1>📝 TrackTect Terminal Output</h1>
+  <pre>{{ output }}</pre>
+
+  {% if errors %}
+    <h2>⚠️ Errors</h2>
+    <pre>{{ errors }}</pre>
+  {% endif %}
+
+  <a href="/">🔙 Run Again</a>
+</body>
+</html>
