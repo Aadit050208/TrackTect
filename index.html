@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TrackTect - AI Competitor Monitor</title>
+  <style>
+    :root {
+      --bg-light: #f4f6fa;
+      --bg-dark: #1e1e2f;
+      --text-light: #333;
+      --text-dark: #f2f2f2;
+      --card-light: #ffffff;
+      --card-dark: #2c2f3a;
+      --accent: #007bff;
+    }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      margin: 0;
+      padding: 20px;
+      transition: background 0.4s ease, color 0.4s ease;
+      background: var(--bg-light);
+      color: var(--text-light);
+    }
+
+    body.dark {
+      background: var(--bg-dark);
+      color: var(--text-dark);
+    }
+
+    .container {
+      max-width: 900px;
+      margin: auto;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+
+    input[type="text"], input[type="submit"] {
+      width: 100%;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      margin-top: 8px;
+      margin-bottom: 16px;
+      box-sizing: border-box;
+    }
+
+    input[type="submit"] {
+      background: var(--accent);
+      color: white;
+      font-weight: bold;
+      border: none;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+
+    input[type="submit"]:hover {
+      background: #0056b3;
+    }
+
+    .section {
+      background: var(--card-light);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 30px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+      transition: transform 0.3s, background 0.4s;
+    }
+
+    body.dark .section {
+      background: var(--card-dark);
+    }
+
+    .section:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+    }
+
+    h2, h3 {
+      margin-top: 0;
+      color: inherit;
+    }
+
+    ul {
+      padding-left: 20px;
+    }
+
+    ul li {
+      margin-bottom: 8px;
+    }
+
+    details {
+      background: #f9f9f9;
+      padding: 10px;
+      border-radius: 6px;
+    }
+
+    body.dark details {
+      background: #3a3a4a;
+    }
+
+    a {
+      color: var(--accent);
+    }
+
+    em {
+      color: #666;
+      font-style: italic;
+    }
+
+    .toggle-switch {
+      text-align: right;
+      margin-bottom: 20px;
+    }
+
+    .toggle-switch button {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 6px;
+      background-color: #007bff;
+      color: #fff;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+
+    .toggle-switch button:hover {
+      background-color: #0056b3;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="toggle-switch">
+      <button onclick="toggleMode()">🌙 Toggle Dark Mode</button>
+    </div>
+
+    <h1>🚀 TrackTect - AI Competitor Tracker</h1>
+
+    <form method="POST">
+      <div class="section">
+        <label>Website URL(s):</label>
+        <input type="text" name="urls" placeholder="https://example.com, https://xyz.com" required>
+        <label>Optional Twitter Handle:</label>
+        <input type="text" name="twitter_handle" placeholder="e.g. nike">
+        <label>Optional YouTube Channel URL:</label>
+        <input type="text" name="youtube_url" placeholder="e.g. https://www.youtube.com/@Nike">
+        <input type="submit" value="Run Agents">
+      </div>
+    </form>
+
+    {% if result %}
+    <div class="section">
+      <h2>📊 Classified Insights:</h2>
+      {% for domain, categories in result.classified.items() %}
+        <h3>{{ domain.replace('_', '.') }}</h3>
+        <ul>
+          {% for item in categories %}
+            <li><strong>[{{ item.category }}]</strong> {{ item.text }}</li>
+          {% endfor %}
+        </ul>
+      {% endfor %}
+    </div>
+
+    <div class="section">
+      <h2>🆕 Landing Page Changes:</h2>
+      {% for url, info in result.landing_changes.items() %}
+        <h3>{{ url }}</h3>
+        <p>Status: <strong>{{ info.status }}</strong></p>
+        {% if info.diff %}
+          <details>
+            <summary>📄 View Changes</summary>
+            <pre>{{ info.diff | join('\n') }}</pre>
+          </details>
+        {% else %}
+          <p>No new messaging changes.</p>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    <div class="section">
+      <h2>🐦 Twitter Activity:</h2>
+      {% for url, tweets in result.tweets.items() %}
+        <h3>{{ url }}</h3>
+        <ul>
+          {% for tweet in tweets %}
+            <li>{{ tweet }}</li>
+          {% endfor %}
+        </ul>
+      {% endfor %}
+    </div>
+
+    <div class="section">
+      <h2>🎬 YouTube Content:</h2>
+      {% for url, videos in result.youtube.items() %}
+        <h3>{{ url }}</h3>
+        {% for video in videos %}
+          <div style="margin-bottom: 15px;">
+            <a href="{{ video.url }}" target="_blank"><strong>{{ video.title or 'Untitled Video' }}</strong></a><br>
+            <em>{{ video.description[:150] }}...</em>
+          </div>
+        {% endfor %}
+      {% endfor %}
+    </div>
+
+    <div class="section">
+      <h2>🧠 Notion Status:</h2>
+      <p>{{ result.notion_status }}</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <script>
+    function toggleMode() {
+      document.body.classList.toggle('dark');
+    }
+  </script>
+</body>
+</html>
