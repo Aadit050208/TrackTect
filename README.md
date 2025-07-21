@@ -1,6 +1,6 @@
 🚀 TrackTect – AI-Powered Competitor Intelligence Toolkit
 
-🏆 Built at the Adobe GenAI Hackathon 2025💡 A smart way to monitor competitor updates across web, Twitter, YouTube, and more🧠 Powered by modular AI agents, clean UI, and real-time classification
+🏆 Built at the AI AGENT HACKATHON BY PRODUCT SPACE 2025💡 A smart way to monitor competitor updates across web, Twitter, YouTube, and more🧠 Powered by modular AI agents, clean UI, and real-time classification
 
 🧠 The Problem We Solved
 
@@ -136,8 +136,9 @@ TrackTect/
 ├── output/                     # JSON logs or AI outputs
 │   └── classified_results.json
 │
-├── app.py                      # Flask server file (UI backend)
-├── main.py                     #cli output
+├── app.py                      # Flask server file 
+├── backend_logic.py            # logic for ui based output
+├── main.py                     # cli output
 ├── backend_logic.py            # Logic separated from UI (calls agents)
 ├── requirements.txt            # Python dependencies
 
