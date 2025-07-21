@@ -95,7 +95,11 @@ Scrapes latest videos, titles, and top comments
 git clone https://github.com/Aadit050208/TrackTect.git
 
 cd TrackTect
-pip install -r requirements.txt
+
+pip install -r 
+
+requirements.txt
+
 python app.py
 
 ⚡ Start the Web App
