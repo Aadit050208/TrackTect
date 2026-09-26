@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<p class="dim" style="margin-bottom:18px">Account-level preferences. Per-competitor options live on each competitor page.</p>
+
+<div class="panel">
+  <form method="POST">
+    <label>Default check frequency for new competitors (hours)</label>
+    <input type="number" name="default_interval_hours" min="1"
+           value="{{ user.default_interval_hours or 24 }}" style="max-width:140px">
+
+    <div class="checkbox-row" style="margin-top:16px">
+      <input type="checkbox" id="digest_enabled" name="digest_enabled"
+             {% if user.digest_enabled %}checked{% endif %}>
+      <label for="digest_enabled">Weekly digest automatically (Mondays 09:00 UTC)</label>
+    </div>
+    <div class="checkbox-row" style="margin-top:10px">
+      <input type="checkbox" id="digest_daily" name="digest_daily"
+             {% if user.digest_daily %}checked{% endif %}>
+      <label for="digest_daily">Daily digest automatically (08:00 UTC) — emailed/webhooked when configured</label>
+    </div>
+
+    <h2 style="margin-top:22px">Your product roadmap</h2>
+    <p class="faint">One theme per line. We flag competitor changes that overlap what you’re building. Free to edit anytime — no search cost.</p>
+    <textarea name="roadmap_items" rows="7" placeholder="Q2: bulk export&#10;Building: mobile app&#10;Planned: SSO">{% for line in roadmap_items %}{{ line }}
+{% endfor %}</textarea>
+
+    <p class="faint" style="margin-top:12px">
+      Theme is controlled by the Theme link in the sidebar.
+    </p>
+
+    <h2 style="margin-top:22px">Your searches</h2>
+    <p class="faint">{{ quota_label }} Viewing the dashboard and past history is always free — only new checks / look-ups / LLM exports use a search.</p>
+    {% if quota_limit %}
+    <div class="quota-usage-panel">
+      <div class="quota-usage-meta">
+        <strong>{{ quota_used }}</strong> used · <strong>{{ quota_left }}</strong> left of {{ quota_limit }}
+      </div>
+      <span class="quota-meter large" aria-hidden="true">
+        <span class="quota-meter-fill" style="width: {{ ((quota_used / quota_limit) * 100) | int }}%"></span>
+      </span>
+    </div>
+    {% endif %}
+
+    <h2 style="margin-top:22px">Digests</h2>
+    <p class="faint">
+      Roundups of everything that changed.
+      <a href="{{ url_for('digests_list') }}">View saved digests</a>
+      · <a href="{{ url_for('export_digest') }}">Export this week as Markdown</a>
+    </p>
+
+    <h2 style="margin-top:22px">Notifications</h2>
+    <p class="faint">
+      Webhook: {% if webhook_configured %}configured via <code>NOTIFY_WEBHOOK_URL</code>{% else %}not configured — set <code>NOTIFY_WEBHOOK_URL</code> for Slack/Teams{% endif %}<br>
+      Email: {% if email_configured %}configured via SMTP env vars{% else %}not configured — digests still store under Digests; set SMTP_* to email them{% endif %}
+    </p>
+
+    <button class="btn" type="submit" style="margin-top:16px">Save settings</button>
+  </form>
+
+  <h2 style="margin-top:22px">Tour</h2>
+  <form method="POST" action="{{ url_for('onboarding_replay') }}">
+    <button class="btn ghost small" type="submit">Show me the walkthrough again</button>
+  </form>
+</div>
+{% endblock %}

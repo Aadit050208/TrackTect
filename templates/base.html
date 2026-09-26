@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}TrackTect{% endblock %} · TrackTect</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}?v=2">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/logo.png') }}?v=2">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script>
+    (function () {
+      // Default to light (pale blue brand). User can toggle Theme in the sidebar.
+      var saved = localStorage.getItem('tracktect-theme');
+      if (saved === 'dark') {
+        /* night variant — no data-light */
+      } else {
+        document.documentElement.setAttribute('data-light', '1');
+        if (saved !== 'light') localStorage.setItem('tracktect-theme', 'light');
+      }
+    })();
+  </script>
+</head>
+<body>
+<script>if (document.documentElement.hasAttribute('data-light')) document.body.classList.add('light');</script>
+
+{% if session.get('user_id') %}
+<div class="shell">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="{{ url_for('dashboard') }}">
+      <img class="brand-logo" src="{{ url_for('static', filename='img/logo.png') }}?v=2" alt="" width="36" height="36">
+      TrackTect
+    </a>
+
+    <a class="side-link {{ 'active' if request.endpoint == 'dashboard' and not request.args.get('view') }}" href="{{ url_for('dashboard') }}">Overview</a>
+    <a class="side-link {{ 'active' if request.endpoint == 'search' }}" href="{{ url_for('search') }}">Find</a>
+    <a class="side-link {{ 'active' if request.endpoint == 'pm_briefing' }}" href="{{ url_for('pm_briefing') }}">Briefing</a>
+    <a class="side-link {{ 'active' if request.endpoint == 'feature_parity' }}" href="{{ url_for('feature_parity') }}">Feature parity</a>
+    <a class="side-link {{ 'active' if request.endpoint == 'quarterly_review' }}" href="{{ url_for('quarterly_review') }}">Quarterly review</a>
+    <a class="side-link {{ 'active' if request.endpoint == 'compare' }}" href="{{ url_for('compare') }}">Compare</a>
+    <a class="side-link {{ 'active' if request.endpoint and request.endpoint.startswith('digest') }}" href="{{ url_for('digests_list') }}">Digests</a>
+    <a class="side-link {{ 'active' if request.endpoint == 'settings_page' }}" href="{{ url_for('settings_page') }}">Settings</a>
+    {% if is_admin %}
+    <a class="side-link {{ 'active' if request.endpoint and request.endpoint.startswith('admin') }}" href="{{ url_for('admin_panel') }}">Admin</a>
+    {% endif %}
+
+    <div class="quota-pill" title="{{ quota_label }}">
+      {% if quota_left > 0 %}
+        {{ quota_left }} of {{ quota_limit }} searches left
+      {% else %}
+        No searches left
+      {% endif %}
+      {% if quota_limit %}
+      <span class="quota-meter" aria-hidden="true">
+        <span class="quota-meter-fill" style="width: {{ ((quota_used / quota_limit) * 100) | int }}%"></span>
+      </span>
+      {% endif %}
+    </div>
+
+    {% if sidebar_views %}
+    <div class="side-section">Saved views</div>
+    {% for view in sidebar_views %}
+      <a class="side-item {{ 'active' if request.args.get('view')|int == view.id }}"
+         href="{{ url_for('dashboard', view=view.id) }}">
+        <span class="favicon"><span class="letter">◈</span></span>
+        <span class="name">{{ view.name }}</span>
+      </a>
+    {% endfor %}
+    {% endif %}
+
+    {% if sidebar_tags %}
+    <div class="side-section">Tags</div>
+    {% for tag in sidebar_tags %}
+      <a class="side-item {{ 'active' if request.args.get('tag') == tag.name }}"
+         href="{{ url_for('dashboard', tag=tag.name) }}">
+        <span class="favicon"><span class="letter">#</span></span>
+        <span class="name">{{ tag.name }}</span>
+      </a>
+    {% endfor %}
+    {% endif %}
+
+    <div class="side-section">Competitors</div>
+    <div class="comp-filter-wrap">
+      <input type="search" id="comp-filter" class="comp-filter"
+             placeholder="Filter your list…"
+             aria-label="Filter competitors by name"
+             autocomplete="off">
+    </div>
+    {% from "_macros.html" import favicon %}
+    <form id="bulk-form" method="POST" action="{{ url_for('competitors_bulk') }}">
+    {% for comp in sidebar_competitors %}
+      <div class="side-item-row" data-comp-name="{{ comp.name|lower }} {{ (comp.url or '')|lower }}">
+        <input type="checkbox" name="competitor_ids" value="{{ comp.id }}" class="bulk-check"
+               aria-label="Select {{ comp.name }}" form="bulk-form">
+        <a class="side-item {{ 'active' if request.view_args and request.view_args.get('competitor_id') == comp.id }}"
+           href="{{ url_for('competitor_detail', competitor_id=comp.id) }}">
+          {{ favicon(comp.url, comp.name) }}
+          <span class="name">{{ comp.name }}{% if comp.paused %} <span class="faint">(paused)</span>{% endif %}</span>
+        </a>
+      </div>
+    {% endfor %}
+    </form>
+    <p class="comp-filter-empty faint" id="comp-filter-empty" hidden>No match — try <a href="{{ url_for('search') }}">Find</a> or <a href="{{ url_for('add_competitor') }}">add them</a>.</p>
+    <a class="side-item" href="{{ url_for('add_competitor') }}">
+      <span class="favicon"><span class="letter">+</span></span>
+      <span class="name dim">Add competitor</span>
+    </a>
+
+    <div class="bulk-bar" id="bulk-bar" hidden>
+      <select name="action" form="bulk-form" aria-label="Bulk action" class="bulk-select">
+        <option value="pause">Pause</option>
+        <option value="resume">Resume</option>
+        <option value="frequency">Set frequency…</option>
+        <option value="delete">Stop tracking</option>
+      </select>
+      <input type="number" name="interval_hours" form="bulk-form" value="24" min="1"
+             class="bulk-hours" aria-label="Hours" title="Hours for frequency change">
+      <button type="submit" form="bulk-form" class="btn small">Apply</button>
+    </div>
+
+    <div class="sidebar-foot">
+      <a class="faint" href="{{ url_for('how_it_works') }}">How this works</a>
+      <span class="spacer"></span>
+      <span>{{ session.get('username') }}</span>
+      <a href="#" onclick="toggleMode(); return false;" title="Toggle theme">Theme</a>
+      <a href="{{ url_for('logout') }}">Log out</a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="hamburger" type="button" aria-label="Open menu"
+              onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+      <button class="back-btn" type="button" onclick="goBack()" title="Go back" aria-label="Go back">← Back</button>
+      <button class="search-btn" type="button" onclick="location.href='{{ url_for('search') }}'" aria-label="Find a brand">
+        Search any brand…
+      </button>
+      <nav class="nav-tabs" aria-label="Primary">
+        <a class="{{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}">Overview</a>
+        <a class="{{ 'active' if request.endpoint == 'search' }}" href="{{ url_for('search') }}">Find</a>
+        <a class="{{ 'active' if request.endpoint == 'pm_briefing' }}" href="{{ url_for('pm_briefing') }}">Briefing</a>
+        <a class="{{ 'active' if request.endpoint == 'feature_parity' }}" href="{{ url_for('feature_parity') }}">Parity</a>
+        <a class="{{ 'active' if request.endpoint == 'quarterly_review' }}" href="{{ url_for('quarterly_review') }}">Quarterly</a>
+        <a class="{{ 'active' if request.endpoint == 'compare' }}" href="{{ url_for('compare') }}">Compare</a>
+        <a class="{{ 'active' if request.endpoint and request.endpoint.startswith('digest') }}" href="{{ url_for('digests_list') }}">Digests</a>
+      </nav>
+      <span class="spacer" style="flex:1"></span>
+
+      <div class="alert-center">
+        <button class="alert-bell" type="button" aria-label="Alerts ({{ unread_count }} unread)"
+                aria-expanded="false" aria-controls="alert-dropdown"
+                onclick="toggleAlerts(this)">
+          <span aria-hidden="true">○</span>
+          {% if unread_count %}<span class="alert-count">{{ unread_count }}</span>{% endif %}
+        </button>
+        <div class="alert-dropdown" id="alert-dropdown" hidden>
+          {% if unread_alerts %}
+            {% for alert in unread_alerts %}
+            <a class="alert-row" href="{{ url_for('run_detail', run_id=alert.run_id) if alert.run_id else url_for('dashboard') }}">
+              <span class="dot {{ alert.severity }}" title="{{ alert.severity }} priority"></span>
+              <span class="alert-body">
+                <strong style="font-weight:500">{{ alert.competitor_name }}</strong> — {{ alert.message[:100] }}
+                <span class="faint">{{ alert.created_at | timeago }}</span>
+              </span>
+            </a>
+            {% endfor %}
+            <form method="POST" action="{{ url_for('alerts_seen') }}">
+              <input type="hidden" name="next" value="{{ request.path }}">
+              <button class="btn ghost small" type="submit" style="width:100%; margin-top:6px">Mark all as seen</button>
+            </form>
+          {% else %}
+            <div class="empty" style="padding:18px">No new alerts</div>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if sidebar_competitors %}
+      <span class="run-status"><span class="dot ok" title="actively tracking"></span> tracking {{ sidebar_competitors | length }}</span>
+      {% endif %}
+      <a class="btn small" href="{{ url_for('add_competitor') }}" title="{% if quota_left > 0 %}Uses 1 search to look them up{% else %}{{ quota_label }}{% endif %}">Add competitor</a>
+    </header>
+
+    <div class="content {% block content_class %}{% endblock %}">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+          <div class="flash {{ category }}" role="status">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+</div>
+
+<div class="palette-overlay" id="palette-overlay" role="dialog" aria-modal="true" aria-label="Command palette">
+  <div class="palette">
+    <input type="text" id="palette-input" placeholder="Search competitors, changes, and actions…" autocomplete="off" aria-label="Command palette search">
+    <div class="palette-list" id="palette-list" role="listbox"></div>
+  </div>
+</div>
+
+<script>
+  window.__paletteItems = [
+    { label: 'Overview', kind: 'page', href: '{{ url_for('dashboard') }}' },
+    { label: 'Find / look up a brand', kind: 'action', href: '{{ url_for('search') }}' },
+    { label: 'Briefing', kind: 'page', href: '{{ url_for('pm_briefing') }}' },
+    { label: 'Feature parity', kind: 'page', href: '{{ url_for('feature_parity') }}' },
+    { label: 'Quarterly review', kind: 'page', href: '{{ url_for('quarterly_review') }}' },
+    { label: 'Compare competitors', kind: 'action', href: '{{ url_for('compare') }}' },
+    { label: 'Track a brand', kind: 'action', href: '{{ url_for('add_competitor') }}' },
+    { label: 'Quick check (one-off)', kind: 'action', href: '{{ url_for('quick_check') }}' },
+    { label: 'Settings', kind: 'page', href: '{{ url_for('settings_page') }}' },
+    { label: 'How this works', kind: 'page', href: '{{ url_for('how_it_works') }}' },
+    { label: 'Weekly digests', kind: 'page', href: '{{ url_for('digests_list') }}' },
+    {% if is_admin %}
+    { label: 'Admin', kind: 'page', href: '{{ url_for('admin_panel') }}' },
+    {% endif %}
+    {% for view in sidebar_views %}
+    { label: {{ view.name | tojson }}, kind: 'view', href: '{{ url_for('dashboard', view=view.id) }}' },
+    {% endfor %}
+    {% for comp in sidebar_competitors %}
+    { label: {{ comp.name | tojson }}, kind: 'competitor', href: '{{ url_for('competitor_detail', competitor_id=comp.id) }}' },
+    {% endfor %}
+  ];
+  window.__searchUrl = {{ url_for('search') | tojson }};
+  window.__addCompetitorUrl = {{ url_for('add_competitor') | tojson }};
+  window.__dashboardUrl = {{ url_for('dashboard') | tojson }};
+</script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+
+{% else %}
+<div class="auth-wrap">
+  <div class="auth-network" id="auth-network" aria-hidden="true"></div>
+  <div class="auth-box">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash {{ category }}" role="status">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block auth_content %}{% endblock %}
+  </div>
+</div>
+<script>
+  function toggleMode() {
+    document.body.classList.toggle('light');
+    if (document.body.classList.contains('light')) {
+      document.documentElement.setAttribute('data-light', '1');
+    } else {
+      document.documentElement.removeAttribute('data-light');
+    }
+    localStorage.setItem('tracktect-theme',
+      document.body.classList.contains('light') ? 'light' : 'dark');
+  }
+</script>
+<script src="{{ url_for('static', filename='auth-network.js') }}?v=8" defer></script>
+{% endif %}
+</body>
+</html>

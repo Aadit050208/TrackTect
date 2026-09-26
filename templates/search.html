@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% from "_macros.html" import favicon, dot, chip %}
+{% block title %}Find{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="titles">
+    <h1>Find</h1>
+    <span class="faint">Search a brand you already track — or look up any company by name.</span>
+  </div>
+</div>
+
+<div class="bento stagger" style="margin-bottom:18px">
+  <div class="bento-card" style="grid-column: span 4">
+    <p class="card-kicker">In your list</p>
+    <h2 class="card-title" style="margin:0 0 8px; font-size:1.15rem">Search tracked</h2>
+    <p class="dim" style="margin:0 0 12px; font-size:0.92rem">Jump to a competitor or find changes by topic. Free.</p>
+    <a class="btn ghost small" href="#find-query">Use the search box</a>
+  </div>
+  <div class="bento-card" style="grid-column: span 4">
+    <p class="card-kicker">Any brand</p>
+    <h2 class="card-title" style="margin:0 0 8px; font-size:1.15rem">Look up &amp; track</h2>
+    <p class="dim" style="margin:0 0 12px; font-size:0.92rem">Type Flipkart, Nike, Notion… we’ll find their site. Uses 1 search.</p>
+    <a class="btn small" href="{{ url_for('add_competitor') }}">Track a brand</a>
+  </div>
+  <div class="bento-card" style="grid-column: span 4">
+    <p class="card-kicker">One-off</p>
+    <h2 class="card-title" style="margin:0 0 8px; font-size:1.15rem">Quick check</h2>
+    <p class="dim" style="margin:0 0 12px; font-size:0.92rem">Peek at a site without saving it. Uses 1 search.</p>
+    <a class="btn ghost small" href="{{ url_for('quick_check') }}">Run quick check</a>
+  </div>
+</div>
+
+<div class="panel lift-card" id="find-query">
+  <form method="GET" action="{{ url_for('search') }}" class="welcome-form" style="animation:none">
+    <label for="q">Brand name or topic</label>
+    <div class="welcome-field" style="margin-top:6px">
+      <span class="welcome-field-mark" aria-hidden="true"></span>
+      <input id="q" type="search" name="q" value="{{ query }}"
+             placeholder="e.g. Amazon, Nike, AAPL, pricing, launch" autofocus autocomplete="off">
+      <button class="welcome-go" type="submit">
+        Search
+        <span class="welcome-go-arrow" aria-hidden="true">→</span>
+      </button>
+    </div>
+  </form>
+  <p class="faint" style="margin-top:12px">
+    Searching your list is free. Live news pulls Google News RSS and Yahoo Finance when a public ticker matches.
+    Looking up a new brand to track uses 1 search.
+  </p>
+</div>
+
+{% if query %}
+  {% if market and (market.ticker or market.news) %}
+  <section class="panel lift-card market-intel" aria-label="Live market and news">
+    <div class="market-intel-head">
+      <div>
+        <p class="card-kicker" style="margin:0">Live intel</p>
+        <h2 style="margin:4px 0 0">News &amp; market for “{{ query }}”</h2>
+      </div>
+      {% if market.overall_sentiment %}
+      <span class="sentiment-pill sentiment-{{ market.overall_sentiment.label }}"
+            title="Average VADER compound {{ market.overall_sentiment.compound }} across {{ market.overall_sentiment.count }} headlines">
+        Tone {{ market.overall_sentiment.label }}
+        <span class="faint">({{ '%.2f'|format(market.overall_sentiment.compound) }})</span>
+      </span>
+      {% endif %}
+    </div>
+
+    {% if market.ticker %}
+    <div class="ticker-strip">
+      <span class="ticker-symbol">{{ market.ticker.symbol }}</span>
+      <span class="ticker-name dim">{{ market.ticker.name }}</span>
+      {% if market.ticker.price is not none %}
+      <span class="ticker-price">
+        {{ market.ticker.currency }} {{ '%.2f'|format(market.ticker.price) }}
+      </span>
+      {% endif %}
+      {% if market.ticker.change_pct is not none %}
+      <span class="ticker-chg {% if market.ticker.change_pct >= 0 %}up{% else %}down{% endif %}">
+        {{ '%+.2f'|format(market.ticker.change_pct) }}%
+      </span>
+      {% endif %}
+      <span class="faint">via Yahoo Finance</span>
+    </div>
+    {% elif market.note %}
+    <p class="faint" style="margin:8px 0 0">{{ market.note }}</p>
+    {% endif %}
+
+    {% if market.news %}
+    <div class="feed" style="margin-top:14px">
+      {% for item in market.news %}
+      <div class="feed-item">
+        <span class="favicon"><span class="letter">N</span></span>
+        <div class="body">
+          <div class="line">
+            {% if item.signal_label %}{{ chip(item.signal_label) }}{% endif %}
+            {% if item.sentiment %}
+            <span class="sentiment-pill sentiment-{{ item.sentiment.label }} small">
+              {{ item.sentiment.label }}
+            </span>
+            {% endif %}
+            <span class="summary">
+              {% if item.url %}<a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.title }}</a>
+              {% else %}{{ item.title }}{% endif %}
+            </span>
+          </div>
+          <div class="meta faint">
+            {{ item.source or item.channel }}
+            {% if item.published %} · {{ item.published }}{% endif %}
+            {% if item.channel == 'yahoo_finance' %} · Yahoo Finance{% elif item.channel == 'google_news' %} · Google News{% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="faint" style="margin:10px 0 0">
+      Sources:
+      {% if market.sources_used %}{{ market.sources_used | join(', ') }}{% else %}none{% endif %}.
+      {% if market.sentiment_enabled %}Headline sentiment via VADER (rule-based; not investment advice).
+      {% else %}Sentiment scoring is offline on this install.{% endif %}
+    </p>
+    {% elif market.note %}
+    <p class="dim" style="margin-top:10px">{{ market.note }}</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if matched_competitors %}
+  <h2>In your list — matching “{{ query }}”</h2>
+  <div class="feed" style="margin-bottom:20px">
+    {% for comp in matched_competitors %}
+    <a class="feed-item find-comp-hit" href="{{ url_for('competitor_detail', competitor_id=comp.id) }}">
+      {{ favicon(comp.url, comp.name) }}
+      <div class="body">
+        <div class="line">
+          <span class="summary">{{ comp.name }}</span>
+          {% if comp.paused %}{{ chip('paused') }}{% endif %}
+        </div>
+        <div class="meta faint">{{ comp.url }}</div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if results %}
+  <h2>Changes mentioning “{{ query }}”</h2>
+  {% for name, items in results.items() %}
+  <h3 class="find-group-title">{{ name }}</h3>
+  <div class="feed" style="margin-bottom:16px">
+    {% for item in items %}
+    <div class="feed-item">
+      {{ favicon(item.competitor_url, name) }}
+      <div class="body">
+        <div class="line">
+          {% if item.severity %}{{ dot(item.severity) }}{% else %}{{ dot('low') }}{% endif %}
+          <span class="summary">{{ item.text }}</span>
+          {% if item.category %}{{ chip(item.category) }}{% endif %}
+          {{ chip(item.type) }}
+          <span class="when">{{ item.created_at | timeago }}</span>
+        </div>
+        <div class="meta">
+          {% if item.competitor_id %}
+            <a href="{{ url_for('competitor_detail', competitor_id=item.competitor_id) }}">open competitor</a>
+          {% endif %}
+          {% if item.run_id %} · <a href="{{ url_for('run_detail', run_id=item.run_id) }}">run log</a>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  {% if not matched_competitors %}
+  <div class="panel lift-card" style="background: var(--grad-soft); border-color: color-mix(in srgb, var(--accent) 35%, var(--border));">
+    <h2 style="margin-top:0">Not in your list yet</h2>
+    <p class="dim">
+      “{{ query }}” isn’t one of your tracked competitors.
+      Look them up by name — we’ll find their website and ask you to confirm before tracking.
+    </p>
+    <form method="POST" action="{{ url_for('add_competitor') }}" style="margin-top:12px"
+          data-busy="1"
+          data-busy-title="Looking them up…"
+          data-busy-detail="Finding their website, social pages, and recent news.">
+      <input type="hidden" name="name" value="{{ query }}">
+      <button class="btn" type="submit" data-busy-label="Looking up…"
+              {% if quota_left <= 0 %}disabled title="{{ quota_label }}"{% endif %}>
+        Look up “{{ query }}” <span class="cost-badge-inline">uses 1 search</span>
+      </button>
+    </form>
+    {% if quota_left <= 0 %}
+    <p class="faint" style="margin-top:10px">{{ quota_label }}</p>
+    {% endif %}
+    <p class="faint" style="margin-top:10px">
+      Or <a href="{{ url_for('quick_check') }}">run a one-off quick check</a> without saving them.
+    </p>
+  </div>
+  {% elif not results and not (market and market.news) %}
+  <p class="faint">No change text matched “{{ query }}” yet — try after the next check.</p>
+  {% endif %}
+{% endif %}
+{% endblock %}

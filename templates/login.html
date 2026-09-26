@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block auth_content %}
+<div class="brand">
+  <img class="brand-logo" src="{{ url_for('static', filename='img/logo.png') }}?v=2" alt="" width="44" height="44">
+  TrackTect
+</div>
+<div class="panel">
+  <h1>Welcome back</h1>
+  <p class="dim" style="margin-top:0; margin-bottom:8px">Sign in to your competitor intelligence workspace.</p>
+  <form method="POST" autocomplete="on">
+    <label>Username</label>
+    <input type="text" name="username" required autofocus autocomplete="username">
+    <label>Password</label>
+    <input type="password" name="password" required autocomplete="current-password">
+    <button class="btn" type="submit" style="margin-top: 18px; width: 100%; justify-content: center">Log in</button>
+  </form>
+</div>
+<p class="faint" style="text-align:center">No account? <a href="{{ url_for('register') }}">Create one</a></p>
+{% endblock %}

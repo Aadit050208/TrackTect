@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% from "_macros.html" import chip %}
+{% block title %}Confirm what we found{% endblock %}
+{% block content %}
+<h1>Does this look right?</h1>
+<p class="guide-line">
+  We looked up <strong>{{ discovery.name }}</strong>. Confirm or fix anything that looks wrong — automated lookup isn't perfect for ambiguous names.
+</p>
+
+{% if discovery.error and not discovery.website.url %}
+<div class="panel">
+  <p>{{ discovery.error }}</p>
+  <a class="btn ghost" href="{{ url_for('add_competitor') }}">Try another name</a>
+</div>
+{% endif %}
+
+<div class="panel">
+  <form method="POST" action="{{ url_for('add_competitor_confirm') }}" data-busy="1"
+        data-busy-title="Starting tracking…"
+        data-busy-detail="Saving this company and preparing their first update.">
+    <div class="grid-2">
+      <div>
+        <label>Name</label>
+        <input type="text" name="name" value="{{ discovery.name }}" required>
+      </div>
+      <div>
+        <label>Check every (hours)</label>
+        <input type="number" name="interval_hours" value="{{ default_interval or 24 }}" min="1">
+      </div>
+      <div style="grid-column: 1 / -1">
+        <label>
+          Website
+          {% if discovery.website.confidence == 'high' %}
+            <span class="chip">verified</span>
+          {% elif discovery.website.url %}
+            <span class="chip">please confirm</span>
+          {% else %}
+            <span class="chip">not found</span>
+          {% endif %}
+        </label>
+        <input type="text" name="url" value="{{ discovery.website.url or '' }}"
+               placeholder="https://…" required>
+        {% if discovery.website.note %}<p class="faint">{{ discovery.website.note }}</p>{% endif %}
+      </div>
+      <div>
+        <label>
+          Twitter / X
+          {% if discovery.twitter.status == 'found' %}
+            <span class="chip">found</span>
+          {% else %}
+            <span class="chip">not found</span>
+          {% endif %}
+        </label>
+        <input type="text" name="twitter_handle"
+               value="{{ discovery.twitter.handle or '' }}"
+               placeholder="Leave blank if unknown">
+      </div>
+      <div>
+        <label>
+          Instagram
+          {% if discovery.instagram.status == 'found' %}
+            <span class="chip">found</span>
+          {% else %}
+            <span class="chip">not found</span>
+          {% endif %}
+        </label>
+        <input type="text" name="instagram_handle"
+               value="{{ discovery.instagram.handle or '' }}"
+               placeholder="Leave blank if unknown">
+      </div>
+      <div style="grid-column: 1 / -1">
+        <label>
+          YouTube
+          {% if discovery.youtube.status == 'found' %}
+            <span class="chip">found</span>
+          {% else %}
+            <span class="chip">not found</span>
+          {% endif %}
+        </label>
+        <input type="text" name="youtube_url"
+               value="{{ discovery.youtube.url or '' }}"
+               placeholder="Leave blank if unknown">
+      </div>
+      <div style="grid-column: 1 / -1">
+        <label>Tags (optional)</label>
+        <input type="text" name="tags" placeholder="e.g. Direct, Watch only">
+      </div>
+    </div>
+
+    {% if discovery.news %}
+    <h2 style="margin-top:18px">Recent news we found</h2>
+    <ul class="section-bullets" style="margin-bottom:12px">
+      {% for n in discovery.news[:5] %}
+      <li>
+        {% if n.url %}<a href="{{ n.url }}" target="_blank" rel="noopener">{{ n.title }}</a>
+        {% else %}{{ n.title }}{% endif %}
+        <span class="faint"> · {{ n.signal_label or n.signal_type }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <div style="display:flex; gap:10px; margin-top:16px; flex-wrap:wrap">
+      <button class="btn" type="submit" data-busy-label="Saving…">Yes, track them</button>
+      <a class="btn ghost" href="{{ url_for('add_competitor') }}">Start over</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

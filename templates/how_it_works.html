@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}How this works{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="titles">
+    <h1>How this works</h1>
+    <span class="faint">A short guide — no jargon.</span>
+  </div>
+</div>
+
+<div class="panel how-card">
+  <ol class="how-list">
+    <li>
+      <strong>What TrackTect does</strong>
+      <p>You tell it a company name. It finds their website and public pages, then watches for meaningful changes — like new products, pricing, campaigns, or big news.</p>
+    </li>
+    <li>
+      <strong>What “tracking” means</strong>
+      <p>Once a company is on your list, TrackTect checks them on a schedule (and whenever you tap Check now). You don’t need to keep searching yourself.</p>
+    </li>
+    <li>
+      <strong>How you’ll know something changed</strong>
+      <p>Updates show up on Overview and on each company’s page. Important ones also appear in your alert bell. The PM Briefing page gathers everything section by section.</p>
+    </li>
+    <li>
+      <strong>Searches and more access</strong>
+      <p>Each new lookup or check uses one of your free searches. Looking at past results is always free. If you run out, ask an admin to give you more.</p>
+    </li>
+  </ol>
+  <p class="faint" style="margin-top:14px">
+    Need help? Contact your TrackTect admin.
+    {% if is_admin %} You’re an admin — manage quotas under <a href="{{ url_for('admin_panel') }}">Admin</a>.{% endif %}
+  </p>
+</div>
+{% endblock %}

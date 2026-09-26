@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_macros.html" import chip, dot %}
+{% block title %}Parity evidence{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="titles">
+    <h1>{{ feature }}</h1>
+    <span class="faint">{{ competitor.name if competitor else 'Competitor' }} · {{ cell.label }}</span>
+  </div>
+  <div class="actions">
+    <a class="btn ghost" href="{{ url_for('feature_parity') }}">Back to matrix</a>
+  </div>
+</div>
+
+{% if cell.evidence %}
+<div class="feed">
+  {% for ev in cell.evidence %}
+  <div class="feed-item">
+    {{ dot(ev.severity or 'low') }}
+    <div class="body">
+      <div class="line">
+        <span class="summary">{{ ev.text }}</span>
+        {{ chip(ev.category) }}
+        <span class="when">{{ ev.created_at | timeago }}</span>
+      </div>
+      <div class="meta">
+        {% if ev.run_id %}<a href="{{ url_for('run_detail', run_id=ev.run_id) }}">run log</a>{% endif %}
+        {% if ev.roadmap_match %} · matched “{{ ev.roadmap_match }}”{% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel">
+  <div class="empty">
+    <div>No signal yet for this feature on {{ competitor.name }}.</div>
+    <div class="hint">We’ll fill this in when a classified change overlaps this roadmap theme.</div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

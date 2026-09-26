@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Register{% endblock %}
+{% block auth_content %}
+<div class="brand">
+  <img class="brand-logo" src="{{ url_for('static', filename='img/logo.png') }}?v=2" alt="" width="44" height="44">
+  TrackTect
+</div>
+<div class="panel">
+  <h1>Create your workspace</h1>
+  <p class="dim" style="margin-top:0; margin-bottom:8px">Track competitors, spot changes, and get alerted only when it matters.</p>
+  <form method="POST" autocomplete="on">
+    <label>Username</label>
+    <input type="text" name="username" required autofocus minlength="3" maxlength="32"
+           pattern="[A-Za-z0-9_]+" title="Letters, numbers, and underscores only"
+           autocomplete="username">
+    <label>Password</label>
+    <input type="password" name="password" required minlength="8"
+           autocomplete="new-password"
+           title="At least 8 characters, with a letter and a number or symbol">
+    <label>Confirm password</label>
+    <input type="password" name="password_confirm" required minlength="8"
+           autocomplete="new-password">
+    <p class="faint" style="margin:10px 0 0">At least 8 characters · use a letter plus a number or symbol</p>
+    <button class="btn" type="submit" style="margin-top: 18px; width: 100%; justify-content: center">Create account</button>
+  </form>
+</div>
+<p class="faint" style="text-align:center">Already registered? <a href="{{ url_for('login') }}">Log in</a></p>
+{% endblock %}

@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% from "_macros.html" import favicon, dot, chip %}
+{% block title %}Briefing{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="titles">
+    <h1>Briefing</h1>
+    <span class="faint">Section-wise product changes, news, funding, campaigns &amp; engagement — last {{ days }} days</span>
+  </div>
+  <div class="actions">
+    <form method="GET" class="inline-form">
+      <select name="days" aria-label="Time range" onchange="this.form.submit()">
+        {% for d in [7, 14, 30] %}
+        <option value="{{ d }}" {% if days == d %}selected{% endif %}>Last {{ d }} days</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+</div>
+
+{% if not briefing %}
+<div class="panel">
+  <div class="empty">
+    <div>No competitors yet.</div>
+    <div class="hint"><a href="{{ url_for('add_competitor') }}">Add a competitor</a> and run a check to fill this briefing.</div>
+  </div>
+</div>
+{% endif %}
+
+{% for block in briefing %}
+{% set c = block.competitor %}
+<article class="brief-card">
+  <header class="brief-head">
+    {{ favicon(c.url, c.name) }}
+    <div class="titles">
+      <h2><a href="{{ url_for('competitor_detail', competitor_id=c.id) }}">{{ c.name }}</a></h2>
+      <span class="faint">{{ c.url | domain }}
+        {% if block.high_count %} · {{ block.high_count }} high-priority{% endif %}
+        {% if block.news %} · {{ block.news | length }} news{% endif %}
+      </span>
+    </div>
+    <form method="POST" action="{{ url_for('competitor_run', competitor_id=c.id) }}">
+      <button class="btn ghost small" type="submit">Refresh</button>
+    </form>
+  </header>
+
+  {% if block.sections %}
+  <h3 class="brief-label">By section</h3>
+  <div class="section-grid">
+    {% for sec in block.sections %}
+    <div class="section-tile">
+      <div class="section-name">{{ sec.section }}</div>
+      {% if sec.summary %}<p class="section-summary">{{ sec.summary }}</p>{% endif %}
+      {% if sec.bullets %}
+      <ul class="section-bullets">
+        {% for b in sec.bullets %}
+        <li>{{ b }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if block.news %}
+  <h3 class="brief-label">News &amp; market signals</h3>
+  <div class="feed brief-feed">
+    {% for n in block.news %}
+    <div class="feed-item">
+      {{ dot('high' if n.signal_type == 'funding' else 'medium') }}
+      <div class="body">
+        <div class="line">
+          <span class="summary">
+            {% if n.url %}<a href="{{ n.url }}" target="_blank" rel="noopener">{{ n.title }}</a>
+            {% else %}{{ n.title }}{% endif %}
+          </span>
+          {{ chip(n.signal_label or n.signal_type) }}
+          <span class="when">{{ n.created_at | timeago }}</span>
+        </div>
+        {% if n.summary %}<div class="meta">{{ n.summary }}</div>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% set has_cats = false %}
+  {% for cat, items in block.by_category.items() %}
+    {% if items %}{% set has_cats = true %}{% endif %}
+  {% endfor %}
+  {% if block.insights %}
+  <h3 class="brief-label">Classified changes</h3>
+  <div class="feed brief-feed">
+    {% for item in block.insights[:8] %}
+    <div class="feed-item">
+      {{ dot(item.severity) }}
+      <div class="body">
+        <div class="line">
+          <span class="summary">{{ item.text }}</span>
+          {{ chip(item.category) }}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if block.patterns %}
+  <h3 class="brief-label">Patterns</h3>
+  <div class="feed brief-feed">
+    {% for p in block.patterns %}
+    <div class="feed-item">
+      {{ dot('medium') }}
+      <div class="body">
+        <div class="line"><span class="summary">{{ p.message }}</span></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if not block.sections and not block.news and not block.insights %}
+  <p class="faint" style="margin:8px 0 0">No signals in this window — run <strong>Check now</strong> on the competitor page.</p>
+  {% endif %}
+</article>
+{% endfor %}
+{% endblock %}

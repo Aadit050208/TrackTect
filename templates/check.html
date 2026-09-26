@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% from "_macros.html" import dot, chip %}
+{% block title %}Quick check{% endblock %}
+{% block content %}
+<h1>Quick check</h1>
+<p class="dim" style="margin-bottom: 8px">Run a one-off look without saving. Viewing past results elsewhere is free.</p>
+<p class="quota-hint">{{ quota_label }} · <span class="cost-badge">uses 1 search</span></p>
+
+<div class="panel">
+  <form method="POST" data-busy="1"
+        data-busy-title="Running check…"
+        data-busy-detail="Looking at their pages and summarizing what matters for a PM.">
+    <label>Website URLs, comma-separated</label>
+    <input type="text" name="urls" placeholder="https://example.com, https://xyz.com" required {% if quota_left <= 0 %}disabled{% endif %}>
+    <div class="grid-2">
+      <div>
+        <label>Twitter handle (optional)</label>
+        <input type="text" name="twitter_handle" placeholder="e.g. nike" {% if quota_left <= 0 %}disabled{% endif %}>
+      </div>
+      <div>
+        <label>YouTube channel URL (optional)</label>
+        <input type="text" name="youtube_url" placeholder="https://www.youtube.com/@Nike" {% if quota_left <= 0 %}disabled{% endif %}>
+      </div>
+    </div>
+    <button class="btn" type="submit" style="margin-top: 16px" data-busy-label="Running…"
+            {% if quota_left <= 0 %}disabled{% endif %}>
+      Run check
+    </button>
+  </form>
+</div>
+
+{% if result %}
+  {% for r in result.results %}
+    <h2>{{ r.url | domain }}</h2>
+
+    <div class="agent-status">
+      {% for agent, info in r.agent_status.items() %}
+        <span class="chip-status" title="{{ info.message }}">
+          <span class="dot {{ info.status }}"></span>
+          <span class="name">{{ agent }}</span>
+          <span>{{ info.message }}</span>
+        </span>
+      {% endfor %}
+    </div>
+
+    {% set high = r.insights | selectattr('severity', 'equalto', 'high') | list %}
+    {% set rest = r.insights | rejectattr('severity', 'equalto', 'high') | list %}
+    {% if high %}
+    <div class="feed" style="margin-bottom: 12px">
+      {% for item in high %}
+      <div class="feed-item">
+        {{ dot('high') }}
+        <div class="body"><div class="line">
+          <span class="summary">{{ item.text }}</span>{{ chip(item.category) }}
+        </div></div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if rest %}
+    <div class="panel">
+      <details>
+        <summary class="dim" style="cursor:pointer">{{ rest | length }} lower-priority change{{ 's' if rest|length != 1 }}</summary>
+        <div style="margin-top: 10px">
+          {% for item in rest %}
+          <div class="feed-item" style="border:none; padding: 6px 0">
+            {{ dot(item.severity) }}
+            <div class="body"><div class="line">
+              <span class="summary">{{ item.text }}</span>{{ chip(item.category) }}
+            </div></div>
+          </div>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
+    {% endif %}
+
+    {% if r.tweets %}
+    <div class="panel">
+      <div class="faint" style="margin-bottom: 8px">Recent tweets</div>
+      {% for tweet in r.tweets %}<p>{{ tweet[:280] }}</p>{% endfor %}
+    </div>
+    {% endif %}
+
+    {% if r.videos %}
+    <div class="panel">
+      <div class="faint" style="margin-bottom: 8px">Recent videos</div>
+      {% for video in r.videos %}
+        <p><a href="{{ video.url }}" target="_blank">{{ video.title or 'Untitled' }}</a><br>
+        <span class="faint">{{ video.description[:150] }}…</span></p>
+      {% endfor %}
+    </div>
+    {% endif %}
+  {% endfor %}
+
+  <h2>Agent log</h2>
+  <div class="terminal">{{ result.logs | join('\n') }}</div>
+{% endif %}
+{% endblock %}

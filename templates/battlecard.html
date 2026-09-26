@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Battlecard · {{ competitor.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="titles">
+    <h1>Battlecard — {{ competitor.name }}</h1>
+    <span class="faint">One-pager for sales or leadership. Positioning summary uses 1 search when you generate it.</span>
+  </div>
+  <div class="actions">
+    <a class="btn ghost" href="{{ url_for('competitor_detail', competitor_id=competitor.id) }}">Back</a>
+  </div>
+</div>
+
+{% if not positioning %}
+<div class="panel">
+  <h2 style="margin-top:0">Generate positioning summary</h2>
+  <p class="dim">
+    We’ll write a short 2–3 sentence summary from recent classified changes and pricing signals.
+    This will use <strong>1 of your remaining searches</strong> ({{ quota_left }} left).
+  </p>
+  <form method="POST" data-busy="1" data-busy-title="Writing battlecard…">
+    <input type="hidden" name="confirm" value="1">
+    <button class="btn" type="submit" {% if quota_left <= 0 %}disabled{% endif %}>
+      Generate battlecard <span class="cost-badge-inline">uses 1 search</span>
+    </button>
+  </form>
+  <p class="faint" style="margin-top:12px">Preview below shows structure with a placeholder until you generate.</p>
+</div>
+{% endif %}
+
+<div class="panel">
+  <label for="battle-md">Markdown</label>
+  <textarea id="battle-md" class="export-md" rows="22" readonly>{{ markdown }}</textarea>
+  <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px">
+    <button class="btn" type="button" id="copy-battle">Copy to clipboard</button>
+    {% if positioning %}
+    <a class="btn ghost" href="{{ url_for('competitor_battlecard', competitor_id=competitor.id, download=1) }}">Download .md</a>
+    {% endif %}
+  </div>
+</div>
+<script>
+document.getElementById('copy-battle').addEventListener('click', function () {
+  var ta = document.getElementById('battle-md');
+  var btn = this;
+  navigator.clipboard.writeText(ta.value).then(function () {
+    var old = btn.textContent; btn.textContent = 'Copied';
+    setTimeout(function () { btn.textContent = old; }, 1200);
+  });
+});
+</script>
+{% endblock %}

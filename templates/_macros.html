@@ -1,0 +1,123 @@
+{# Shared UI macros: favicon avatar, severity dot, category chip, diff viewer. #}
+
+{% macro favicon(url, name) -%}
+<span class="favicon">
+  <span class="letter">{{ (name or url or '?')[:1] | upper }}</span>
+  <img src="https://www.google.com/s2/favicons?domain={{ url | domain }}&sz=32" alt=""
+       loading="lazy" onerror="this.remove()">
+</span>
+{%- endmacro %}
+
+{% macro dot(severity) -%}
+{%- set tip =
+  'High priority — worth a PM’s attention soon (pricing, major launch, funding).' if severity == 'high' else
+  'Medium priority — notable change, review when you can.' if severity == 'medium' else
+  'Low priority — minor copy or tone tweak.' if severity == 'low' else
+  'This step finished successfully.' if severity == 'ok' else
+  'This step failed — see the log for details.' if severity == 'error' else
+  'This step had a problem but the rest continued.' if severity == 'warn' else
+  'This step was skipped (not needed or not available).' if severity == 'skipped' else
+  ((severity or '') ~ ' status')
+-%}
+<span class="dot {{ severity }}" title="{{ tip }}"></span>
+{%- endmacro %}
+
+{% macro chip(text) -%}
+{%- set tip =
+  'A new product or feature they shipped.' if text == 'Feature Update' else
+  'A new product, collection, or launch called out on their site.' if text == 'New Product / Launch' else
+  'How the site or product looks or feels changed.' if text == 'UI/UX Change' else
+  'Price, plan, or discount change.' if text == 'Pricing Change' else
+  'A sale, % off, coupon, or limited-time offer on their site.' if text == 'Discount / Offer' else
+  'Ads, brand campaigns, or promotions.' if text == 'Marketing Campaign' else
+  'Investment, acquisition, or partnership news.' if text == 'Funding / Partnership' else
+  'A collaboration, integration, or partner callout on their site.' if text == 'Partnership / Collab' else
+  'Users, community, loyalty, or growth signals.' if text == 'User Engagement' else
+  'Open roles or hiring signals on their careers pages.' if text == 'Careers' else
+  'Sustainability, community, or social-impact messaging.' if text == 'Impact / CSR' else
+  'Messaging or brand voice changed.' if text == 'Tone Shift' else
+  'Something else we noticed.' if text == 'Other' else
+  'Text on their webpage changed since last check.' if text == 'page diff' else
+  'Public news headline about this company.' if text == 'news' else
+  'A trend we spotted across several checks.' if text == 'pattern' else
+  (text or '')
+-%}
+{%- set cat =
+  'cat-pricing' if text in ['Pricing Change', 'Discount / Offer'] else
+  'cat-feature' if text in ['Feature Update', 'New Product / Launch'] else
+  'cat-ui' if text == 'UI/UX Change' else
+  'cat-tone' if text == 'Tone Shift' else
+  'cat-marketing' if text == 'Marketing Campaign' else
+  'cat-funding' if text in ['Funding / Partnership', 'Partnership / Collab'] else
+  'cat-engagement' if text == 'User Engagement' else
+  'cat-careers' if text == 'Careers' else
+  'cat-impact' if text == 'Impact / CSR' else
+  'cat-other' if text in ['Other', 'page diff', 'news', 'pattern'] else
+  ''
+-%}
+<span class="chip {{ cat }}" title="{{ tip }}">{{ text }}</span>
+{%- endmacro %}
+
+{% macro roadmap_tag(match) -%}
+{%- if match -%}
+<span class="roadmap-tag" title="This change looks related to something on your roadmap">overlaps your roadmap: {{ match }}</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro insight_actions(insight, competitor_name='') -%}
+{%- if insight.id -%}
+<span class="insight-actions">
+  <button type="button" class="linkish ticket-btn"
+          data-insight-id="{{ insight.id }}"
+          data-category="{{ insight.category or '' }}"
+          data-text="{{ insight.text or '' }}"
+          data-severity="{{ insight.severity or '' }}"
+          data-reason="{{ insight.triage_reason or '' }}"
+          data-roadmap="{{ insight.roadmap_match or '' }}"
+          data-competitor="{{ competitor_name or insight.competitor_name or '' }}">Draft ticket</button>
+  <details class="note-details decision-details">
+    <summary class="linkish" title="PM decision">
+      {% if insight.decision %}{{ insight.decision }}{% if insight.decision_owner %} · {{ insight.decision_owner }}{% endif %}
+      {% else %}decide{% endif %}
+    </summary>
+    <form method="POST" action="{{ url_for('insight_decision', insight_id=insight.id) }}" class="decision-form">
+      <label class="sr-only" for="decision-{{ insight.id }}">Decision</label>
+      <select id="decision-{{ insight.id }}" name="decision" required>
+        <option value="monitor" {% if insight.decision == 'monitor' %}selected{% endif %}>Monitor</option>
+        <option value="respond" {% if insight.decision == 'respond' %}selected{% endif %}>Respond</option>
+        <option value="ignore" {% if insight.decision == 'ignore' %}selected{% endif %}>Ignore</option>
+        <option value="" {% if not insight.decision %}selected{% endif %}>Clear</option>
+      </select>
+      <input type="text" name="owner" maxlength="80" placeholder="Owner (optional)"
+             value="{{ insight.decision_owner or '' }}">
+      <button class="btn ghost small" type="submit">Save</button>
+    </form>
+  </details>
+  <details class="note-details">
+    <summary class="linkish" title="Private note">{% if insight.note %}note{% else %}＋ note{% endif %}</summary>
+    <form method="POST" action="{{ url_for('insight_note', insight_id=insight.id) }}" class="note-form">
+      <textarea name="note" rows="2" maxlength="2000" placeholder="e.g. Relevant — bringing to planning">{{ insight.note or '' }}</textarea>
+      <button class="btn ghost small" type="submit">Save note</button>
+    </form>
+  </details>
+</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro diff_view(lines, summary_label=None) -%}
+{% if lines %}
+<details class="diff-details">
+  <summary title="Shows what wording changed on their page">{{ summary_label or (lines | length ~ ' changed lines') }}</summary>
+  <div class="diff">
+    {%- for line in lines -%}
+    <div class="diff-line
+      {%- if line[:3] == '+++' or line[:3] == '---' %} meta
+      {%- elif line[:1] == '+' %} add
+      {%- elif line[:1] == '-' %} del
+      {%- elif line[:2] == '@@' %} hunk
+      {%- endif %}">{{ line }}</div>
+    {%- endfor -%}
+  </div>
+</details>
+{% endif %}
+{%- endmacro %}

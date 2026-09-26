@@ -1,0 +1,500 @@
+{% extends "base.html" %}
+{% from "_macros.html" import favicon, dot, chip, diff_view, roadmap_tag, insight_actions %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+
+{% if show_onboarding %}
+<section class="welcome" id="onboarding" aria-label="Welcome">
+  <div class="welcome-atmosphere" aria-hidden="true">
+    <span class="welcome-ring welcome-ring-a"></span>
+    <span class="welcome-ring welcome-ring-b"></span>
+    <span class="welcome-ring welcome-ring-c"></span>
+    <span class="welcome-beam"></span>
+  </div>
+
+  <div class="welcome-stage">
+    <p class="welcome-brand">
+      <img class="welcome-logo" src="{{ url_for('static', filename='img/logo.png') }}?v=2" alt="" width="64" height="64">
+      <span>TrackTect</span>
+    </p>
+    <h1 class="welcome-title">Who should we&nbsp;watch?</h1>
+    <p class="welcome-lead">
+      Name a competitor. We’ll find their site and social pages, then surface what actually changes.
+    </p>
+
+    <form method="POST" action="{{ url_for('add_competitor') }}" class="welcome-form" data-busy="1"
+          data-busy-title="Looking them up…"
+          data-busy-detail="Finding their website and social pages.">
+      <label class="sr-only" for="onboard-name">Company or brand name</label>
+      <div class="welcome-field{% if quota_left <= 0 %} is-disabled{% endif %}">
+        <span class="welcome-field-mark" aria-hidden="true"></span>
+        <input id="onboard-name" type="text" name="name"
+               placeholder="Brand name or website"
+               required autofocus autocomplete="organization"
+               {% if quota_left <= 0 %}disabled{% endif %}>
+        <button class="welcome-go" type="submit" data-busy-label="Looking up…"
+                {% if quota_left <= 0 %}disabled{% endif %}>
+          Find them
+          <span class="welcome-go-arrow" aria-hidden="true">→</span>
+        </button>
+      </div>
+    </form>
+
+    {% if quota_left > 0 %}
+    <p class="welcome-examples">
+      Try
+      <button type="button" class="welcome-chip" data-fill="Flipkart">Flipkart</button><span class="welcome-sep" aria-hidden="true">·</span>
+      <button type="button" class="welcome-chip" data-fill="Amazon">Amazon</button><span class="welcome-sep" aria-hidden="true">·</span>
+      <button type="button" class="welcome-chip" data-fill="Notion">Notion</button>
+    </p>
+    {% else %}
+    <p class="welcome-quota-block">{{ quota_label }}</p>
+    {% endif %}
+
+    <div class="welcome-foot">
+      {% if quota_left > 0 %}
+      <span class="welcome-quota">{{ quota_label }}</span>
+      {% endif %}
+      <form method="POST" action="{{ url_for('onboarding_dismiss') }}">
+        <button class="welcome-skip" type="submit">Skip for now</button>
+      </form>
+    </div>
+  </div>
+</section>
+<script>
+(function () {
+  var input = document.getElementById('onboard-name');
+  if (!input) return;
+  document.querySelectorAll('.welcome-chip[data-fill]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      input.value = btn.getAttribute('data-fill') || '';
+      input.focus();
+    });
+  });
+})();
+</script>
+{% else %}
+
+{% if show_roadmap_setup %}
+<div class="panel roadmap-setup" id="roadmap-setup">
+  <h1>What are you building?</h1>
+  <p class="dim">Paste a few roadmap themes — one per line. We’ll flag competitor changes that overlap them. Edit anytime in Settings.</p>
+  <form method="POST" action="{{ url_for('roadmap_save') }}">
+    <input type="hidden" name="next" value="{{ url_for('dashboard') }}">
+    <label for="roadmap_items">Roadmap themes</label>
+    <textarea id="roadmap_items" name="roadmap_items" rows="6"
+              placeholder="Q2: bulk export&#10;Building: mobile app&#10;Planned: SSO"></textarea>
+    <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap">
+      <button class="btn" type="submit">Save roadmap</button>
+    </div>
+  </form>
+  <form method="POST" action="{{ url_for('roadmap_skip') }}" style="margin-top:8px">
+    <button class="btn ghost small" type="submit">Skip for now</button>
+  </form>
+</div>
+{% endif %}
+
+{% if show_walkthrough %}
+<div class="walkthrough" id="walkthrough" role="dialog" aria-label="Quick tour">
+  <div class="walkthrough-card">
+    <div class="walkthrough-steps">
+      <div class="walk-step active" data-step="0">
+        <p class="walk-kicker">Step 1 of 3</p>
+        <h2>Type a company name</h2>
+        <p>Use <strong>Add competitor</strong> — just the brand name. We’ll find their website and social pages.</p>
+      </div>
+      <div class="walk-step" data-step="1" hidden>
+        <p class="walk-kicker">Step 2 of 3</p>
+        <h2>Confirm what we found</h2>
+        <p>We’ll show you the site and accounts. Fix anything that looks wrong, then start tracking.</p>
+      </div>
+      <div class="walk-step" data-step="2" hidden>
+        <p class="walk-kicker">Step 3 of 3</p>
+        <h2>Check back for updates</h2>
+        <p>Overview and PM Briefing fill in as changes appear. You don’t need to keep searching yourself.</p>
+      </div>
+    </div>
+    <div class="walkthrough-actions">
+      <button type="button" class="btn ghost small" id="walk-skip">Skip</button>
+      <button type="button" class="btn small" id="walk-next">Next</button>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var root = document.getElementById('walkthrough');
+  if (!root) return;
+  var steps = root.querySelectorAll('.walk-step');
+  var i = 0;
+  var next = document.getElementById('walk-next');
+  var skip = document.getElementById('walk-skip');
+  function show(n) {
+    steps.forEach(function (el, idx) {
+      el.hidden = idx !== n;
+      el.classList.toggle('active', idx === n);
+    });
+    next.textContent = n === steps.length - 1 ? 'Got it' : 'Next';
+  }
+  function done() {
+    root.remove();
+    var f = document.createElement('form');
+    f.method = 'POST';
+    f.action = {{ url_for('onboarding_dismiss') | tojson }};
+    document.body.appendChild(f);
+    f.submit();
+  }
+  next.addEventListener('click', function () {
+    if (i >= steps.length - 1) done();
+    else { i += 1; show(i); }
+  });
+  skip.addEventListener('click', done);
+  show(0);
+})();
+</script>
+{% endif %}
+
+<div class="page-head">
+  <div class="titles">
+    <h1>Overview</h1>
+    <span class="faint">What needs attention, who’s moving, and what’s new — at a glance.</span>
+  </div>
+  <div class="actions">
+    <a class="btn ghost" href="{{ url_for('digests_list') }}">Digests</a>
+    <a class="btn ghost" href="{{ url_for('pm_briefing') }}">Briefing</a>
+    <a class="btn ghost" href="{{ url_for('compare') }}">Compare</a>
+    <a class="btn" href="{{ url_for('add_competitor') }}" data-cost="1"
+       {% if quota_left <= 0 %}disabled title="{{ quota_label }}"{% endif %}>Add competitor</a>
+  </div>
+</div>
+
+{% if daily_brief %}
+<section class="panel lift-card daily-brief" aria-label="Daily brief">
+  <div class="daily-brief-head">
+    <div>
+      <p class="card-kicker" style="margin:0">Daily brief · last {{ daily_brief.hours }}h</p>
+      <h2 style="margin:4px 0 0">
+        {% if daily_brief.counts.changes or daily_brief.counts.health %}
+          {{ daily_brief.counts.changes }} change{{ 's' if daily_brief.counts.changes != 1 }}
+          {% if daily_brief.counts.high %} · {{ daily_brief.counts.high }} high{% endif %}
+          {% if daily_brief.counts.roadmap %} · {{ daily_brief.counts.roadmap }} roadmap overlap{{ 's' if daily_brief.counts.roadmap != 1 }}{% endif %}
+        {% else %}
+          Quiet window — nothing new in the last {{ daily_brief.hours }} hours
+        {% endif %}
+      </h2>
+    </div>
+    <a class="btn ghost small" href="{{ url_for('dashboard', days=2) }}">Open feed</a>
+  </div>
+
+  <div class="daily-brief-grid">
+    <div>
+      <h3 class="daily-brief-label">Top changes</h3>
+      {% if daily_brief.top_changes %}
+      <ul class="daily-brief-list">
+        {% for item in daily_brief.top_changes %}
+        <li>
+          {{ dot(item.severity) }}
+          <strong>{{ item.competitor_name }}</strong>
+          — {{ item.text[:110] }}{% if item.text|length > 110 %}…{% endif %}
+          {% if item.category %}{{ chip(item.category) }}{% endif %}
+          {{ roadmap_tag(item.roadmap_match) }}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="faint">No classified changes yet.</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3 class="daily-brief-label">Watchlist health</h3>
+      {% if daily_brief.health_issues %}
+      <ul class="daily-brief-list">
+        {% for h in daily_brief.health_issues %}
+        <li>
+          <span class="dot {{ 'error' if h.status == 'failing' else 'warn' }}"></span>
+          <a href="{{ url_for('competitor_detail', competitor_id=h.competitor_id) }}">{{ h.name }}</a>
+          — {{ h.label }}{% if h.detail %} <span class="faint">({{ h.detail }})</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="faint">All tracked competitors look healthy.</p>
+      {% endif %}
+      {% if daily_brief.roadmap_hits %}
+      <h3 class="daily-brief-label" style="margin-top:14px">Roadmap overlaps</h3>
+      <ul class="daily-brief-list">
+        {% for item in daily_brief.roadmap_hits[:3] %}
+        <li><strong>{{ item.competitor_name }}</strong> — {{ item.roadmap_match }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if daily_brief.news %}
+      <h3 class="daily-brief-label" style="margin-top:14px">Recent news</h3>
+      <ul class="daily-brief-list">
+        {% for n in daily_brief.news[:3] %}
+        <li>
+          {{ n.competitor_name }} —
+          {% if n.url %}<a href="{{ n.url }}" target="_blank" rel="noopener">{{ n.title[:90] }}</a>{% else %}{{ n.title[:90] }}{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<div class="bento stagger">
+  <div class="bento-card bento-hero">
+    <p class="card-kicker">Needs attention</p>
+    <h2 class="card-title" style="margin:0">
+      {% if metrics.high_alerts %}{{ metrics.high_alerts }} high-priority signal{{ 's' if metrics.high_alerts != 1 }}{% else %}All quiet on priority{% endif %}
+    </h2>
+    <p class="dim" style="margin:0">
+      {% if alerts %}
+        Fresh alerts from your tracked competitors — worth a look before the week runs away.
+      {% else %}
+        No new high-priority alerts. Keep an eye on the activity feed for quieter moves.
+      {% endif %}
+    </p>
+    {% if alerts %}
+      {% for alert in alerts[:4] %}
+      <div class="attention-item">
+        <div class="line" style="display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap">
+          {{ dot(alert.severity or 'high') }}
+          <span class="summary" style="font-weight:600">{{ alert.competitor_name }}</span>
+          <span class="dim">{{ alert.message[:110] }}{% if alert.message|length > 110 %}…{% endif %}</span>
+        </div>
+        <div class="meta faint" style="margin-top:4px">
+          {{ alert.created_at | timeago }}
+          {% if alert.run_id %} · <a href="{{ url_for('run_detail', run_id=alert.run_id) }}">open</a>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% elif feed %}
+      {% set attention_feed = feed|selectattr('type', 'equalto', 'insight')|list %}
+      {% if attention_feed %}
+        {% for event in attention_feed[:3] %}
+      <div class="attention-item">
+        <div class="line" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+          {{ dot(event.severity or 'medium') }}
+          <span class="summary">{{ event.competitor_name }} — {{ event.text[:100] }}{% if event.text|length > 100 %}…{% endif %}</span>
+          {% if event.category %}{{ chip(event.category) }}{% endif %}
+        </div>
+      </div>
+        {% endfor %}
+      {% else %}
+      <div class="empty" style="padding:18px 0">
+        <div class="empty-art" aria-hidden="true"><span class="blob blob-a"></span><span class="blob blob-b"></span><span class="ring"></span></div>
+        <div class="hint">Run a check to fill this space with live signals.</div>
+      </div>
+      {% endif %}
+    {% else %}
+      <div class="empty" style="padding:18px 0">
+        <div class="empty-art" aria-hidden="true"><span class="blob blob-a"></span><span class="blob blob-b"></span><span class="ring"></span></div>
+        <div class="hint">Add a competitor and run a check — this card lights up with what matters.</div>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="bento-card bento-stat">
+    <div class="value">{{ metrics.tracked }}</div>
+    <div class="label">competitors tracked</div>
+  </div>
+  <div class="bento-card bento-stat amber">
+    <div class="value">{{ metrics.week_changes }}</div>
+    <div class="label">changes this week</div>
+  </div>
+  <div class="bento-card bento-stat rose" style="grid-column: span 5">
+    <div class="value">{{ metrics.health_issues or 0 }}</div>
+    <div class="label">watchlist health issues</div>
+  </div>
+</div>
+
+{% if suggestions %}
+<div class="panel lift-card stagger" style="border-color: color-mix(in srgb, var(--accent-3) 45%, var(--border)); background: linear-gradient(90deg, var(--warn-soft), var(--surface));">
+  <h2 style="margin-top:0; color: var(--accent-3);">Suggestions awaiting confirmation</h2>
+  <div class="feed" style="box-shadow:none; border:none; background:transparent">
+    {% for s in suggestions %}
+    <div class="feed-item">
+      <span class="dot medium" title="suggestion"></span>
+      <div class="body">
+        <div class="line">
+          <span class="summary"><strong style="font-weight:600">{{ s.competitor_name }}</strong> — {{ s.reason }}</span>
+        </div>
+        <div class="meta" style="display:flex; gap:8px; margin-top:8px">
+          <form method="POST" action="{{ url_for('suggestion_resolve', suggestion_id=s.id, action='accept') }}">
+            <button class="btn small" type="submit">Accept</button>
+          </form>
+          <form method="POST" action="{{ url_for('suggestion_resolve', suggestion_id=s.id, action='reject') }}">
+            <button class="btn ghost small" type="submit">Dismiss</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="panel filter-bar lift-card" style="margin-bottom:18px;">
+  <form method="GET" action="{{ url_for('dashboard') }}" class="filter-form">
+    {% if active_view %}<input type="hidden" name="view" value="{{ active_view.id }}">{% endif %}
+    <select name="tag" aria-label="Filter by tag">
+      <option value="">All tags</option>
+      {% for tag in tags %}
+      <option value="{{ tag.name }}" {% if filters.tag == tag.name %}selected{% endif %}>{{ tag.name }}</option>
+      {% endfor %}
+    </select>
+    <select name="severity" aria-label="Filter by severity">
+      <option value="">All severities</option>
+      {% for s in ['high', 'medium', 'low'] %}
+      <option value="{{ s }}" {% if filters.severity == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <select name="category" aria-label="Filter by category">
+      <option value="">All categories</option>
+      {% for c in ['Pricing Change', 'Discount / Offer', 'Feature Update', 'New Product / Launch', 'UI/UX Change', 'Marketing Campaign', 'Funding / Partnership', 'Partnership / Collab', 'User Engagement', 'Careers', 'Impact / CSR', 'Tone Shift', 'Other'] %}
+      <option value="{{ c }}" {% if filters.category == c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    <select name="days" aria-label="Time range">
+      <option value="">Any time</option>
+      <option value="7" {% if filters.days == 7 %}selected{% endif %}>Last 7 days</option>
+      <option value="14" {% if filters.days == 14 %}selected{% endif %}>Last 14 days</option>
+      <option value="30" {% if filters.days == 30 %}selected{% endif %}>Last 30 days</option>
+    </select>
+    <label class="checkbox-inline">
+      <input type="checkbox" name="needs_review" value="1" {% if filters.needs_review %}checked{% endif %}>
+      Needs review
+    </label>
+    <label class="checkbox-inline">
+      <input type="checkbox" name="annotated" value="1" {% if filters.annotated %}checked{% endif %}>
+      With notes
+    </label>
+    <label class="checkbox-inline">
+      <input type="checkbox" name="roadmap" value="1" {% if filters.roadmap %}checked{% endif %}>
+      Overlaps roadmap
+    </label>
+    <button class="btn small" type="submit">Apply</button>
+  </form>
+  <form method="POST" action="{{ url_for('save_view') }}" class="save-view-form">
+    {% if filters.tag %}<input type="hidden" name="tag" value="{{ filters.tag }}">{% endif %}
+    {% if filters.severity %}<input type="hidden" name="severity" value="{{ filters.severity }}">{% endif %}
+    {% if filters.category %}<input type="hidden" name="category" value="{{ filters.category }}">{% endif %}
+    {% if filters.days %}<input type="hidden" name="days" value="{{ filters.days }}">{% endif %}
+    {% if filters.needs_review %}<input type="hidden" name="needs_review" value="1">{% endif %}
+    {% if filters.annotated %}<input type="hidden" name="annotated" value="1">{% endif %}
+    {% if filters.roadmap %}<input type="hidden" name="roadmap" value="1">{% endif %}
+    <input type="text" name="name" placeholder="Save as view…" aria-label="View name" required>
+    <button class="btn ghost small" type="submit">Save view</button>
+  </form>
+</div>
+
+<div class="bento stagger">
+  <div class="bento-card bento-list">
+    <div class="panel-title">
+      <h2 style="margin:0">Competitors</h2>
+      <a class="btn ghost small" href="{{ url_for('add_competitor') }}">Add</a>
+    </div>
+    {% if overview %}
+    <div class="feed">
+      {% for row in overview %}
+      <div class="feed-item">
+        {{ favicon(row.competitor.url, row.competitor.name) }}
+        <div class="body">
+          <div class="line">
+            <a class="summary" href="{{ url_for('competitor_detail', competitor_id=row.competitor.id) }}"
+               style="font-weight:600">{{ row.competitor.name }}</a>
+            <span class="health-badge" title="{{ row.health.detail or row.health.label }}">
+              <span class="dot {{ 'ok' if row.health.status == 'active' else ('error' if row.health.status == 'failing' else ('warn' if row.health.status in ['stale','paused'] else 'skipped')) }}"></span>
+              {{ row.health.label }}
+            </span>
+            {% for t in row.tags %}{{ chip(t) }}{% endfor %}
+            <span class="when">
+              {% if row.last_run %}{{ row.last_run.started_at | timeago }}{% else %}never{% endif %}
+            </span>
+          </div>
+          <div class="meta">
+            {% if row.top_insight %}
+              <span class="dot high" style="width:6px;height:6px" title="high priority"></span>
+              {{ row.top_insight.text[:120] }}{% if row.top_insight.text|length > 120 %}…{% endif %}
+            {% elif row.week_changes %}
+              {{ row.week_changes }} change{{ 's' if row.week_changes != 1 }} this week
+            {% else %}
+              no high-priority changes yet
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">
+      <div class="empty-art" aria-hidden="true"><span class="blob blob-a"></span><span class="blob blob-b"></span><span class="ring"></span></div>
+      <div>No competitors yet.</div>
+      <div class="hint"><a href="{{ url_for('add_competitor') }}">Add your first competitor</a> to fill this space.</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="bento-card bento-feed">
+    <div class="panel-title">
+      <h2 style="margin:0">Recent activity{% if active_view %} · {{ active_view.name }}{% endif %}</h2>
+      <span class="faint">Ctrl+K to jump</span>
+    </div>
+    {% if feed %}
+    <div class="feed">
+      {% for event in feed %}
+      <div class="feed-item">
+        {{ favicon(event.competitor_url, event.competitor_name) }}
+        <div class="body">
+          <div class="line">
+            {% if event.type == 'insight' %}
+              {{ dot(event.severity) }}
+              <span class="summary" {% if event.triage_reason %}title="{{ event.triage_reason }}"{% endif %}>{{ event.text }}</span>
+              {{ chip(event.category) }}
+              {{ roadmap_tag(event.roadmap_match) }}
+              {% if event.needs_review %}<span class="chip needs-review">needs review</span>{% endif %}
+            {% elif event.type == 'diff' %}
+              {% if event.status == 'changed' %}
+                <span class="summary">Landing page messaging changed</span>
+                {{ chip('page diff') }}
+              {% else %}
+                <span class="summary dim">Couldn't reach {{ event.url | domain }}</span>
+              {% endif %}
+            {% elif event.type == 'twitter' %}
+              <span class="summary">{{ event.content[:140] }}{% if event.content|length > 140 %}…{% endif %}</span>
+              {{ chip('tweet') }}
+            {% elif event.type == 'youtube' %}
+              <span class="summary"><a href="{{ event.url }}" target="_blank">{{ event.title or 'New video' }}</a></span>
+              {{ chip('video') }}
+            {% endif %}
+            <span class="when">{{ event.created_at | timeago }}</span>
+          </div>
+          <div class="meta">
+            {{ event.competitor_name }}
+            {% if event.run_id %} · <a href="{{ url_for('run_detail', run_id=event.run_id) }}">run log</a>{% endif %}
+            {% if event.type == 'insight' %}
+              · {{ insight_actions(event, event.competitor_name) }}
+              {% if event.note %}<span class="note-preview" title="{{ event.note }}">note · {{ event.note[:80] }}{% if event.note|length > 80 %}…{% endif %}</span>{% endif %}
+            {% endif %}
+          </div>
+          {% if event.type == 'diff' and event.status == 'changed' %}
+            {{ diff_view(event.diff) }}
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">
+      <div class="empty-art" aria-hidden="true"><span class="blob blob-a"></span><span class="blob blob-b"></span><span class="ring"></span></div>
+      <div>No activity yet for this view.</div>
+      <div class="hint">Try clearing filters, or check a competitor to generate signals.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}

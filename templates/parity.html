@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Feature parity{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="titles">
+    <h1>Feature parity</h1>
+    <span class="faint">Your roadmap themes as rows · tracked competitors as columns. Updates as new changes are classified.</span>
+  </div>
+  <div class="actions">
+    <a class="btn ghost" href="{{ url_for('settings_page') }}">Edit roadmap</a>
+  </div>
+</div>
+
+{% if not matrix.features %}
+<div class="panel">
+  <div class="empty">
+    <div>No roadmap themes yet.</div>
+    <div class="hint">Add a few lines in <a href="{{ url_for('settings_page') }}">Settings</a> (e.g. “SSO”, “bulk export”) to build this table.</div>
+  </div>
+</div>
+{% elif not matrix.competitors %}
+<div class="panel">
+  <div class="empty">
+    <div>No competitors tracked yet.</div>
+    <div class="hint"><a href="{{ url_for('add_competitor') }}">Add a competitor</a> to compare against your features.</div>
+  </div>
+</div>
+{% else %}
+<div class="panel parity-wrap">
+  <table class="parity-table">
+    <thead>
+      <tr>
+        <th>Your feature</th>
+        {% for c in matrix.competitors %}
+        <th><a href="{{ url_for('competitor_detail', competitor_id=c.id) }}">{{ c.name }}</a></th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for feature in matrix.features %}
+      <tr>
+        <th scope="row">{{ feature }}</th>
+        {% for c in matrix.competitors %}
+        {% set cell = matrix.cells[feature][c.id] %}
+        <td>
+          <a class="parity-cell parity-{{ cell.status }}"
+             href="{{ url_for('feature_parity_cell', feature=feature, competitor_id=c.id) }}"
+             title="See evidence">{{ cell.label }}</a>
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="faint" style="margin-top:14px">
+    “No signal yet” means we haven’t detected it in tracked sources — not that they’ve confirmed they don’t have it.
+  </p>
+</div>
+{% endif %}
+{% endblock %}

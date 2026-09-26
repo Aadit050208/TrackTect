@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Draft ticket{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="titles">
+    <h1>Draft ticket</h1>
+    <span class="faint">Ready to paste into Jira, Linear, or Notion. Built from the classified change — no extra search used.</span>
+  </div>
+</div>
+
+<div class="panel">
+  <label for="ticket-md">Markdown</label>
+  <textarea id="ticket-md" class="export-md" rows="18" readonly>{{ markdown }}</textarea>
+  <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px">
+    <button class="btn" type="button" id="copy-ticket">Copy to clipboard</button>
+    <a class="btn ghost" href="{{ url_for('insight_ticket', insight_id=insight.id, download=1) }}">Download .md</a>
+  </div>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0">Want a richer draft?</h2>
+  <p class="dim">Adds suggested next steps with a fresh LLM pass. This uses <strong>1 of your remaining searches</strong> ({{ quota_left }} left).</p>
+  <form method="POST" action="{{ url_for('insight_ticket_detailed', insight_id=insight.id) }}"
+        data-busy="1" data-busy-title="Drafting a richer ticket…"
+        onsubmit="return confirm('This will use 1 of your remaining searches. Continue?');">
+    <button class="btn" type="submit" {% if quota_left <= 0 %}disabled{% endif %}>
+      Generate detailed draft <span class="cost-badge-inline">uses 1 search</span>
+    </button>
+  </form>
+</div>
+
+<script>
+document.getElementById('copy-ticket').addEventListener('click', function () {
+  var ta = document.getElementById('ticket-md');
+  navigator.clipboard.writeText(ta.value).then(function () {
+    flashCopy(this);
+  }.bind(this));
+});
+function flashCopy(btn) {
+  var old = btn.textContent;
+  btn.textContent = 'Copied';
+  setTimeout(function () { btn.textContent = old; }, 1200);
+}
+</script>
+{% endblock %}

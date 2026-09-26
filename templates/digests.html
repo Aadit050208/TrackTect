@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Digests{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="titles">
+    <h1>Digests</h1>
+    <span class="faint">
+      {% if digest_enabled %}Weekly digests are scheduled (Mondays 09:00 UTC).
+      {% else %}Scheduled digests are off — enable them in <a href="{{ url_for('settings_page') }}">settings</a>.{% endif %}
+    </span>
+  </div>
+  <div class="actions">
+    <form method="POST" action="{{ url_for('digests_generate') }}">
+      <button class="btn" type="submit">Generate now</button>
+    </form>
+  </div>
+</div>
+
+{% if digests %}
+<div class="feed">
+  {% for d in digests %}
+  <div class="feed-item">
+    <span class="dot ok" title="digest"></span>
+    <div class="body">
+      <div class="line">
+        <a class="summary" href="{{ url_for('digest_detail', digest_id=d.id) }}" style="font-weight:500">{{ d.title }}</a>
+        <span class="when">{{ d.created_at | timeago }}</span>
+      </div>
+      <div class="meta">
+        <a href="{{ url_for('digest_download', digest_id=d.id) }}">download markdown</a>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel">
+  <div class="empty">
+    <div>No digests yet.</div>
+    <div class="hint">Generate one now, or enable weekly scheduling in settings.</div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

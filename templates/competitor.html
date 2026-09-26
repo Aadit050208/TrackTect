@@ -1,0 +1,352 @@
+{% extends "base.html" %}
+{% from "_macros.html" import favicon, dot, chip, diff_view, roadmap_tag, insight_actions %}
+{% block title %}{{ competitor.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  {{ favicon(competitor.url, competitor.name) }}
+  <div class="titles">
+    <h1>{{ competitor.name }}{% if competitor.paused %} <span class="faint">(paused)</span>{% endif %}</h1>
+    <span class="faint">{{ competitor.url | domain }} · checked every {{ competitor.interval_hours }}h</span>
+  </div>
+  <div class="actions">
+    <a class="btn ghost" href="{{ url_for('competitor_battlecard', competitor_id=competitor.id) }}">Battlecard</a>
+    <form method="POST" action="{{ url_for('competitor_run', competitor_id=competitor.id) }}"
+          data-busy="1"
+          data-busy-title="Checking for updates…"
+          data-busy-detail="Reading their site, news, and social pages. Hang tight — this runs on the server.">
+      <button class="btn" type="submit" data-busy-label="Checking…" data-cost="1"
+              data-cost-label="Check now uses 1 search. Continue?"
+              {% if quota_left <= 0 %}disabled title="{{ quota_label }}"{% endif %}>
+        Check now <span class="cost-badge-inline">uses 1 search</span>
+      </button>
+    </form>
+  </div>
+</div>
+
+{% if suggestions %}
+<h2>Frequency suggestions</h2>
+<div class="feed" style="margin-bottom:14px">
+  {% for s in suggestions %}
+  <div class="feed-item">
+    <span class="dot medium" title="suggestion"></span>
+    <div class="body">
+      <div class="line"><span class="summary">{{ s.reason }}</span></div>
+      <div class="meta" style="display:flex; gap:8px; margin-top:6px">
+        <form method="POST" action="{{ url_for('suggestion_resolve', suggestion_id=s.id, action='accept') }}">
+          <button class="btn small" type="submit">Accept</button>
+        </form>
+        <form method="POST" action="{{ url_for('suggestion_resolve', suggestion_id=s.id, action='reject') }}">
+          <button class="btn ghost small" type="submit">Dismiss</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if pending_sources %}
+<h2>Discovered sources — confirm to track</h2>
+<div class="feed" style="margin-bottom:14px">
+  {% for s in pending_sources %}
+  <div class="feed-item">
+    <span class="dot low" title="discovered source"></span>
+    <div class="body">
+      <div class="line">
+        <span class="summary">{{ s.kind }} — <a href="{{ s.url }}" target="_blank">{{ s.url }}</a></span>
+      </div>
+      <div class="meta" style="display:flex; gap:8px; margin-top:6px">
+        <form method="POST" action="{{ url_for('source_resolve', source_id=s.id, action='accept') }}">
+          <button class="btn small" type="submit">Add to tracking</button>
+        </form>
+        <form method="POST" action="{{ url_for('source_resolve', source_id=s.id, action='reject') }}">
+          <button class="btn ghost small" type="submit">Dismiss</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if patterns %}
+<h2>Detected patterns</h2>
+<div class="feed" style="margin-bottom:14px">
+  {% for p in patterns %}
+  <div class="feed-item">
+    <span class="dot medium" title="pattern"></span>
+    <div class="body">
+      <div class="line">
+        <span class="summary">{{ p.message }}</span>
+        {% if p.category %}{{ chip(p.category) }}{% endif %}
+        <span class="when">{{ p.created_at | timeago }}</span>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if sections %}
+<h2>Section-wise brief</h2>
+<div class="section-grid" style="margin-bottom:18px">
+  {% for sec in sections %}
+  <div class="section-tile">
+    <div class="section-name">{{ sec.section }}</div>
+    {% if sec.summary %}<p class="section-summary">{{ sec.summary }}</p>{% endif %}
+    {% if sec.bullets %}
+    <ul class="section-bullets">
+      {% for b in sec.bullets %}
+      <li>{{ b }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <div class="meta faint">{{ sec.created_at | timeago }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if news %}
+<h2>News — funding, campaigns &amp; engagement</h2>
+<div class="feed" style="margin-bottom:14px">
+  {% for n in news %}
+  <div class="feed-item">
+    {{ dot('high' if n.signal_type == 'funding' else 'medium') }}
+    <div class="body">
+      <div class="line">
+        <span class="summary">
+          {% if n.url %}<a href="{{ n.url }}" target="_blank" rel="noopener">{{ n.title }}</a>
+          {% else %}{{ n.title }}{% endif %}
+        </span>
+        {{ chip(n.signal_type.replace('_', ' ')) }}
+        <span class="when">{{ n.created_at | timeago }}</span>
+      </div>
+      {% if n.summary %}<div class="meta">{{ n.summary }}</div>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if extra_sources %}
+<p class="faint">Also deep-scanning: {{ extra_sources | join(' · ') }}
+  <span title="Pricing, products, careers, partners, offers, about, and impact pages are auto-attached when found">· auto-discovered site sections</span>
+</p>
+{% endif %}
+
+<h2 id="pricing">Pricing</h2>
+{% if pricing_history %}
+{% if pricing_spark %}
+<div class="sparkline" title="Pricing changes per week" aria-label="Pricing change frequency">
+  {% set maxc = pricing_spark | map(attribute='count') | max %}
+  {% for bucket in pricing_spark %}
+  <span class="spark-bar" style="height: {{ 8 if maxc == 0 else (8 + (bucket.count / maxc * 28)) | int }}px"
+        title="{{ bucket.week_start }}: {{ bucket.count }} change{{ 's' if bucket.count != 1 }}"></span>
+  {% endfor %}
+</div>
+<p class="faint" style="margin-top:6px">Pricing changes by week (last {{ pricing_spark|length }} weeks)</p>
+{% endif %}
+<div class="feed" style="margin-bottom:18px">
+  {% for p in pricing_history %}
+  <div class="feed-item">
+    {{ dot(p.severity or 'high') }}
+    <div class="body">
+      <div class="line">
+        <span class="summary">{{ p.text }}</span>
+        {{ chip('Pricing Change') }}
+        {{ roadmap_tag(p.roadmap_match) }}
+        <span class="when">{{ p.created_at | timeago }}</span>
+      </div>
+      <div class="meta">
+        <a href="{{ url_for('run_detail', run_id=p.run_id) }}">full run / diffs</a>
+        · {{ insight_actions(p, competitor.name) }}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel" style="margin-bottom:18px">
+  <div class="empty">
+    <div>No pricing changes detected yet.</div>
+    <div class="hint">When Classifier tags a Pricing Change, it shows up here — free, no extra search.</div>
+  </div>
+</div>
+{% endif %}
+
+<h2>Timeline</h2>
+{% if timeline %}
+<div class="feed">
+  {% for event in timeline %}
+  <div class="feed-item">
+    {% if event.type == 'insight' %}
+      {{ dot(event.severity) }}
+      <div class="body">
+        <div class="line">
+          <span class="summary" {% if event.triage_reason %}title="{{ event.triage_reason }}"{% endif %}>{{ event.text }}</span>
+          {{ chip(event.category) }}
+          {{ roadmap_tag(event.roadmap_match) }}
+          {% if event.needs_review %}<span class="chip needs-review">needs review</span>{% endif %}
+          <span class="when">{{ event.created_at | timeago }}</span>
+        </div>
+        <div class="meta">
+          {% if event.triage_reason %}{{ event.triage_reason }} · {% endif %}
+          <a href="{{ url_for('run_detail', run_id=event.run_id) }}">run log</a>
+          · {{ insight_actions(event, competitor.name) }}
+          {% if event.note %}<span class="note-preview">📝 {{ event.note[:100] }}</span>{% endif %}
+        </div>
+      </div>
+    {% elif event.type == 'news' %}
+      {{ dot('high' if event.signal_type == 'funding' else 'medium') }}
+      <div class="body">
+        <div class="line">
+          <span class="summary">
+            {% if event.url %}<a href="{{ event.url }}" target="_blank" rel="noopener">{{ event.title }}</a>
+            {% else %}{{ event.title }}{% endif %}
+          </span>
+          {{ chip('news') }}
+          {% if event.signal_type %}{{ chip(event.signal_type.replace('_', ' ')) }}{% endif %}
+          <span class="when">{{ event.created_at | timeago }}</span>
+        </div>
+        {% if event.content %}<div class="meta">{{ event.content }}</div>{% endif %}
+      </div>
+    {% elif event.type == 'section' %}
+      {{ dot('low') }}
+      <div class="body">
+        <div class="line">
+          <span class="summary">{{ event.text }}</span>
+          {{ chip(event.section or 'section') }}
+          <span class="when">{{ event.created_at | timeago }}</span>
+        </div>
+      </div>
+    {% elif event.type == 'pattern' %}
+      {{ dot('medium') }}
+      <div class="body">
+        <div class="line">
+          <span class="summary">{{ event.text }}</span>
+          {{ chip('pattern') }}
+          <span class="when">{{ event.created_at | timeago }}</span>
+        </div>
+      </div>
+    {% elif event.type == 'diff' %}
+      {{ dot('medium' if event.status == 'changed' else 'skipped') }}
+      <div class="body">
+        <div class="line">
+          {% if event.status == 'changed' %}
+            <span class="summary">Messaging changed on {{ event.url | domain }}</span>
+            {{ chip('page diff') }}
+          {% else %}
+            <span class="summary dim">Couldn't reach {{ event.url | domain }}</span>
+            {{ chip('fetch failed') }}
+          {% endif %}
+          <span class="when">{{ event.created_at | timeago }}</span>
+        </div>
+        {% if event.status == 'changed' %}{{ diff_view(event.diff) }}{% endif %}
+        <div class="meta"><a href="{{ url_for('run_detail', run_id=event.run_id) }}">run log</a></div>
+      </div>
+    {% elif event.type == 'twitter' %}
+      {{ dot('low') }}
+      <div class="body">
+        <div class="line">
+          <span class="summary">{{ event.content[:200] }}{% if event.content|length > 200 %}…{% endif %}</span>
+          {{ chip('tweet') }}
+          <span class="when">{{ event.created_at | timeago }}</span>
+        </div>
+      </div>
+    {% elif event.type == 'youtube' %}
+      {{ dot('low') }}
+      <div class="body">
+        <div class="line">
+          <span class="summary"><a href="{{ event.url }}" target="_blank">{{ event.title or 'New video' }}</a></span>
+          {{ chip('video') }}
+          <span class="when">{{ event.created_at | timeago }}</span>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel">
+  <div class="empty">
+    <div>No changes detected yet.</div>
+    <div class="hint">Run a check now, or wait for the next scheduled run.</div>
+  </div>
+</div>
+{% endif %}
+
+<h2>Recent runs</h2>
+{% if runs %}
+<div class="feed">
+  <table>
+    <tr><th>Started</th><th>Trigger</th><th>Status</th><th></th></tr>
+    {% for run in runs %}
+    <tr>
+      <td>{{ run.started_at | timeago }}</td>
+      <td class="dim">{{ run.trigger }}</td>
+      <td><span class="dot {{ 'ok' if run.status == 'ok' else ('error' if run.status == 'error' else 'warn') }}" title="{{ run.status }}"></span> {{ run.status }}</td>
+      <td><a class="faint" href="{{ url_for('run_detail', run_id=run.id) }}">view log</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<div class="panel"><div class="empty">No runs yet.</div></div>
+{% endif %}
+
+<h2>Settings</h2>
+<div class="panel">
+  <form method="POST" action="{{ url_for('competitor_settings', competitor_id=competitor.id) }}">
+    <div class="grid-2">
+      <div>
+        <label>Name</label>
+        <input type="text" name="name" value="{{ competitor.name }}">
+      </div>
+      <div>
+        <label>Check frequency (hours)</label>
+        <input type="number" name="interval_hours" value="{{ competitor.interval_hours }}" min="1">
+      </div>
+      <div>
+        <label>Twitter handle</label>
+        <input type="text" name="twitter_handle" value="{{ competitor.twitter_handle }}">
+      </div>
+      <div>
+        <label>YouTube channel URL</label>
+        <input type="text" name="youtube_url" value="{{ competitor.youtube_url }}">
+      </div>
+      <div>
+        <label>Tags (comma-separated)</label>
+        <input type="text" name="tags" value="{{ tags | map(attribute='name') | join(', ') }}"
+               placeholder="e.g. Direct, Watch only">
+      </div>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="en_tw" name="enable_twitter" {% if competitor.enable_twitter %}checked{% endif %}>
+      <label for="en_tw">Track Twitter</label>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="en_yt" name="enable_youtube" {% if competitor.enable_youtube %}checked{% endif %}>
+      <label for="en_yt">Track YouTube</label>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="en_no" name="enable_notion" {% if competitor.enable_notion %}checked{% endif %}>
+      <label for="en_no">Push digests to Notion</label>
+    </div>
+    <button class="btn" type="submit" style="margin-top: 14px">Save settings</button>
+  </form>
+</div>
+
+<div class="panel">
+  <div class="line" style="display:flex; align-items:center; gap: 12px">
+    <div style="flex:1">
+      <div style="font-weight:500">Stop tracking</div>
+      <div class="faint">Removes {{ competitor.name }} from your dashboard. History is kept.</div>
+    </div>
+    <form method="POST" action="{{ url_for('competitor_delete', competitor_id=competitor.id) }}"
+          onsubmit="return confirm('Stop tracking {{ competitor.name }}?');">
+      <button class="btn danger-ghost" type="submit">Stop tracking</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

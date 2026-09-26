@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Admin{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="titles">
+    <h1>Admin</h1>
+    <span class="faint">Adjust search quotas for other users. You can’t change your own quota here.</span>
+  </div>
+</div>
+
+<div class="panel tip-panel" style="margin-bottom:16px">
+  Admins are controlled by <code>ADMIN_USERNAMES</code> in <code>.env</code>.
+  Normal users never see this page.
+</div>
+
+<div class="panel">
+  <table>
+    <tr>
+      <th>User</th>
+      <th>Used</th>
+      <th>Quota</th>
+      <th>Admin</th>
+      <th>Adjust</th>
+    </tr>
+    {% for u in users %}
+    <tr>
+      <td>{{ u.username }}{% if u.id == session.get('user_id') %} <span class="faint">(you)</span>{% endif %}</td>
+      <td>{{ u.usage_count or 0 }}</td>
+      <td>{{ u.usage_quota if u.usage_quota is not none else '—' }}</td>
+      <td>{% if u.is_admin %}yes{% else %}—{% endif %}</td>
+      <td>
+        {% if u.id == session.get('user_id') %}
+          <span class="faint">—</span>
+        {% else %}
+        <form method="POST" action="{{ url_for('admin_set_quota', user_id=u.id) }}" class="admin-quota-form">
+          <input type="number" name="usage_quota" min="0" value="{{ u.usage_quota or 2 }}" aria-label="Quota for {{ u.username }}">
+          <label class="checkbox-inline">
+            <input type="checkbox" name="reset_count" value="1"> Reset used
+          </label>
+          <button class="btn small" type="submit">Save</button>
+        </form>
+        <form method="POST" action="{{ url_for('admin_reset_usage', user_id=u.id) }}" style="display:inline; margin-left:6px">
+          <button class="btn ghost small" type="submit">Reset used only</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

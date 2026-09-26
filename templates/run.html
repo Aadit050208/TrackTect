@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% from "_macros.html" import favicon, dot, chip, diff_view, roadmap_tag %}
+{% block title %}Check — {{ competitor.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  {{ favicon(competitor.url, competitor.name) }}
+  <div class="titles">
+    <h1>{{ competitor.name }}</h1>
+    <span class="faint">
+      Check started {{ run.started_at | timeago }}
+      {% if run.trigger == 'manual' %} · manual
+      {% elif run.trigger == 'scheduled' %} · scheduled
+      {% elif run.trigger %} · {{ run.trigger }}
+      {% endif %}
+      · <span class="dot {{ 'ok' if run.status == 'ok' else ('error' if run.status == 'error' else 'warn') }}"></span> {{ run.status }}
+    </span>
+  </div>
+  <div class="actions">
+    <a class="btn ghost" href="{{ url_for('competitor_detail', competitor_id=competitor.id) }}">Back to {{ competitor.name }}</a>
+  </div>
+</div>
+
+{% set agent_status = run.agent_status | fromjson %}
+{% if agent_status %}
+{% set agent_labels = {
+  'planner': 'Planning what to check',
+  'scraper': 'Reading their website',
+  'summarizer': 'Summarizing what matters',
+  'classifier': 'Sorting changes by type',
+  'triage': 'Ranking importance',
+  'sections': 'Building section brief',
+  'landing': 'Comparing page wording',
+  'twitter': 'Checking social posts',
+  'youtube': 'Checking videos',
+  'news': 'Looking up recent news',
+  'notion': 'Saving to Notion',
+  'pipeline': 'Overall check',
+  'discovery': 'Finding their pages',
+} %}
+<div class="agent-status">
+  {% for agent, info in agent_status.items() %}
+    <span class="chip-status" title="{{ info.message }}">
+      <span class="dot {{ info.status }}"></span>
+      <span class="name">{{ agent_labels.get(agent, agent) }}</span>
+      <span>{{ info.message }}</span>
+    </span>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% set high = insights | selectattr('severity', 'equalto', 'high') | list %}
+{% set review = insights | selectattr('needs_review') | list %}
+{% set rest = insights | rejectattr('severity', 'equalto', 'high') | rejectattr('needs_review') | list %}
+
+{% if high %}
+<h2>High priority</h2>
+<div class="feed">
+  {% for item in high %}
+  <div class="feed-item">
+    {{ dot('high') }}
+    <div class="body">
+      <div class="line">
+        <span class="summary" {% if item.triage_reason %}title="{{ item.triage_reason }}"{% endif %}>{{ item.text }}</span>
+        {{ chip(item.category) }}
+        {{ roadmap_tag(item.roadmap_match) }}
+        {% if item.needs_review %}<span class="chip needs-review">needs review</span>{% endif %}
+      </div>
+      {% if item.triage_reason %}<div class="meta">{{ item.triage_reason }}</div>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if review %}
+<h2>Needs review</h2>
+<div class="feed">
+  {% for item in review if item.severity != 'high' %}
+  <div class="feed-item">
+    {{ dot(item.severity) }}
+    <div class="body">
+      <div class="line">
+        <span class="summary">{{ item.text }}</span>
+        {{ chip(item.category) }}
+        <span class="chip needs-review">needs review</span>
+      </div>
+      <div class="meta">
+        confidence {{ '%.0f'|format((item.confidence or 0) * 100) }}%
+        {% if item.triage_reason %} · {{ item.triage_reason }}{% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if rest %}
+<div class="panel" style="margin-top: 12px">
+  <details>
+    <summary class="dim" style="cursor:pointer">{{ rest | length }} lower-priority change{{ 's' if rest|length != 1 }}</summary>
+    <div style="margin-top: 10px">
+      {% for item in rest %}
+      <div class="feed-item" style="border:none; padding: 6px 0">
+        {{ dot(item.severity) }}
+        <div class="body">
+          <div class="line">
+            <span class="summary" {% if item.triage_reason %}title="{{ item.triage_reason }}"{% endif %}>{{ item.text }}</span>
+            {{ chip(item.category) }}
+          </div>
+          {% if item.triage_reason %}<div class="meta">{{ item.triage_reason }}</div>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </details>
+</div>
+{% endif %}
+
+{% if not insights %}
+<div class="panel">
+  <div class="empty">
+    <div>No classified insights for this run.</div>
+    <div class="hint">If the LLM endpoint isn't configured in .env, summarize and classify are skipped.</div>
+  </div>
+</div>
+{% endif %}
+
+{% if sections %}
+<h2>Section-wise brief</h2>
+<div class="section-grid">
+  {% for sec in sections %}
+  <div class="section-tile">
+    <div class="section-name">{{ sec.section }}</div>
+    {% if sec.summary %}<p class="section-summary">{{ sec.summary }}</p>{% endif %}
+    {% set bullets = sec.bullets if sec.bullets is iterable and sec.bullets is not string else (sec.bullets | fromjson) %}
+    {% if bullets %}
+    <ul class="section-bullets">
+      {% for b in bullets %}
+      <li>{{ b }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if news %}
+<h2>News signals</h2>
+<div class="feed">
+  {% for n in news %}
+  <div class="feed-item">
+    {{ dot('high' if n.signal_type == 'funding' else 'medium') }}
+    <div class="body">
+      <div class="line">
+        <span class="summary">
+          {% if n.url %}<a href="{{ n.url }}" target="_blank" rel="noopener">{{ n.title }}</a>
+          {% else %}{{ n.title }}{% endif %}
+        </span>
+        {{ chip(n.signal_type.replace('_', ' ')) }}
+      </div>
+      {% if n.summary %}<div class="meta">{{ n.summary }}</div>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if diffs %}
+<h2>Landing page checks</h2>
+<div class="feed">
+  {% for diff in diffs %}
+  <div class="feed-item">
+    {% if diff.status == 'changed' %}{{ dot('medium') }}
+    {% elif diff.status == 'failed' %}{{ dot('error') }}
+    {% else %}{{ dot('skipped') }}{% endif %}
+    <div class="body">
+      <div class="line">
+        <span class="summary">{{ diff.url | domain }}</span>
+        {% if diff.status == 'changed' %}{{ chip('changed') }}
+        {% elif diff.status == 'failed' %}<span class="faint">couldn't reach this page</span>
+        {% elif diff.status == 'first_snapshot' %}<span class="faint">first snapshot saved — diffs start next run</span>
+        {% else %}<span class="faint">no change</span>{% endif %}
+      </div>
+      {% set lines = diff.diff | fromjson %}
+      {{ diff_view(lines) }}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if social %}
+<h2>Social activity</h2>
+<div class="feed">
+  {% for item in social %}
+  <div class="feed-item">
+    {{ dot('low') }}
+    <div class="body">
+      <div class="line">
+        {% if item.source == 'twitter' %}
+          <span class="summary">{{ item.content[:250] }}</span>{{ chip('tweet') }}
+        {% else %}
+          <span class="summary"><a href="{{ item.url }}" target="_blank">{{ item.title or 'Untitled video' }}</a></span>{{ chip('video') }}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<h2>Agent log</h2>
+<div class="terminal">{{ (run.logs | fromjson) | join('\n') }}</div>
+{% endblock %}

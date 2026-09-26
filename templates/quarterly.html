@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "_macros.html" import chip, dot, roadmap_tag %}
+{% block title %}Quarterly review{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="titles">
+    <h1>Quarterly review</h1>
+    <span class="faint">Everything detected across competitors, grouped by category — ready for planning.</span>
+  </div>
+  <div class="actions">
+    <a class="btn ghost" href="{{ url_for('quarterly_review', start=start, end=end, download=1) }}">Export .md</a>
+  </div>
+</div>
+
+<div class="panel">
+  <form method="GET" class="filter-form">
+    <label for="start">From</label>
+    <input id="start" type="date" name="start" value="{{ start }}" style="max-width:160px">
+    <label for="end">To</label>
+    <input id="end" type="date" name="end" value="{{ end }}" style="max-width:160px">
+    <button class="btn small" type="submit">Update range</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0">Landscape summary</h2>
+  {% if summary %}
+  <p class="dim" style="line-height:1.55">{{ summary }}</p>
+  <p class="faint">Cached — won’t re-run until you regenerate or change the date range.</p>
+  {% else %}
+  <p class="dim">No summary yet for this range.</p>
+  {% endif %}
+  <form method="POST" style="margin-top:12px" data-busy="1" data-busy-title="Writing quarterly summary…"
+        onsubmit="return confirm('This will use 1 of your remaining searches ({{ quota_left }} left). Continue?');">
+    <input type="hidden" name="start" value="{{ start }}">
+    <input type="hidden" name="end" value="{{ end }}">
+    <input type="hidden" name="confirm" value="1">
+    <input type="hidden" name="action" value="{{ 'regenerate' if summary else 'generate' }}">
+    <button class="btn" type="submit" {% if quota_left <= 0 %}disabled{% endif %}>
+      {{ 'Regenerate summary' if summary else 'Generate summary' }}
+      <span class="cost-badge-inline">uses 1 search</span>
+    </button>
+  </form>
+</div>
+
+{% if insight_count == 0 %}
+<div class="panel">
+  <div class="empty">
+    <div>No classified changes in this range.</div>
+    <div class="hint">Try a wider date range, or run checks on your competitors first.</div>
+  </div>
+</div>
+{% else %}
+{% for cat, items in grouped.items() %}
+<h2>{{ cat }} <span class="faint">({{ items|length }})</span></h2>
+<div class="feed" style="margin-bottom:16px">
+  {% for it in items %}
+  <div class="feed-item">
+    {{ dot(it.severity or 'low') }}
+    <div class="body">
+      <div class="line">
+        <span class="summary"><strong style="font-weight:600">{{ it.competitor_name }}</strong> — {{ it.text }}</span>
+        {{ chip(it.category) }}
+        {{ roadmap_tag(it.roadmap_match) }}
+        <span class="when">{{ it.created_at | timeago }}</span>
+      </div>
+      <div class="meta">
+        {% if it.run_id %}<a href="{{ url_for('run_detail', run_id=it.run_id) }}">run log</a>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}

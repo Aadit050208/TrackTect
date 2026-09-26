@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ digest.title }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="titles">
+    <h1>{{ digest.title }}</h1>
+    <span class="faint">Generated {{ digest.created_at | timeago }} · last {{ digest.period_days }} days</span>
+  </div>
+  <div class="actions">
+    <a class="btn ghost" href="{{ url_for('digest_download', digest_id=digest.id) }}">Download</a>
+    <a class="btn ghost" href="{{ url_for('digests_list') }}">All digests</a>
+  </div>
+</div>
+<div class="terminal">{{ digest.content }}</div>
+{% endblock %}

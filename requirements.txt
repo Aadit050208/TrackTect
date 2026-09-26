@@ -1,0 +1,11 @@
+flask
+requests
+beautifulsoup4
+python-dotenv
+notion-client
+selenium
+webdriver-manager
+curl_cffi
+apscheduler
+yfinance
+vaderSentiment

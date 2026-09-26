@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% from "_macros.html" import favicon, dot, chip %}
+{% block title %}Compare{% endblock %}
+{% block content_class %}wide{% endblock %}
+{% block content %}
+<h1>Compare</h1>
+<p class="dim" style="margin-bottom:18px">Pick 2–3 competitors to see recent changes side by side, grouped by category.</p>
+
+<div class="panel">
+  <form method="POST">
+    <div class="compare-pick">
+      {% for c in competitors %}
+      <label class="checkbox-row">
+        <input type="checkbox" name="competitor_ids" value="{{ c.id }}"
+               {% if c.id in selected %}checked{% endif %}>
+        {{ c.name }}
+      </label>
+      {% else %}
+      <p class="dim">No competitors to compare yet.</p>
+      {% endfor %}
+    </div>
+    <label>Look back (days)</label>
+    <input type="number" name="days" value="{{ days }}" min="1" style="max-width:120px">
+    <button class="btn" type="submit" style="margin-top:14px">Compare</button>
+  </form>
+</div>
+
+{% if data %}
+<div class="compare-grid">
+  {% for name, block in data.items() %}
+  <div class="compare-col">
+    <div class="compare-col-head">
+      {{ favicon(block.competitor.url, name) }}
+      <a href="{{ url_for('competitor_detail', competitor_id=block.competitor.id) }}" style="font-weight:500">{{ name }}</a>
+    </div>
+    {% for category, items in block.by_category.items() %}
+    <div class="compare-section">
+      <div class="faint" style="margin-bottom:6px">{{ category }}</div>
+      {% if items %}
+      <div class="feed">
+        {% for item in items %}
+        <div class="feed-item">
+          {{ dot(item.severity) }}
+          <div class="body">
+            <div class="line">
+              <span class="summary" {% if item.triage_reason %}title="{{ item.triage_reason }}"{% endif %}>{{ item.text }}</span>
+            </div>
+            <div class="meta">{{ item.created_at | timeago }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="faint" style="padding:4px 0 10px">No {{ category | lower }} changes</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

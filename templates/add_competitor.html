@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Add competitor{% endblock %}
+{% block content %}
+<h1>Track a competitor</h1>
+<p class="guide-line">Just type the company or brand name — we'll do the rest. You can also paste their website link.</p>
+<p class="quota-hint">{{ quota_label }} · <span class="cost-badge">uses 1 search</span></p>
+
+<div class="panel">
+  <form method="POST" id="discover-form" data-busy="1"
+        data-busy-title="Looking them up…"
+        data-busy-detail="Finding their website, social pages, and recent news. This can take a few seconds.">
+    <label for="brand-name">Company name or website</label>
+    <input id="brand-name" type="text" name="name"
+           value="{{ prefill or '' }}"
+           placeholder="e.g. Flipkart, Notion, or https://www.flipkart.com"
+           required autofocus {% if quota_left <= 0 %}disabled{% endif %}>
+    <p class="faint" style="margin-top:8px">
+      We'll look up their website and social pages, then ask you to confirm before tracking.
+    </p>
+    <button class="btn" type="submit" style="margin-top: 16px"
+            {% if quota_left <= 0 %}disabled title="No searches left"{% endif %}
+            data-busy-label="Looking up…" data-cost="1"
+            data-cost-label="Looking up a brand uses 1 search. Continue?">
+      Find them
+    </button>
+    {% if quota_left <= 0 %}
+    <p class="faint" style="margin-top:10px">{{ quota_label }}</p>
+    {% endif %}
+  </form>
+</div>
+{% endblock %}
