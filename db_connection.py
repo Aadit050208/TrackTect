@@ -215,6 +215,15 @@ class HttpCursor:
     def close(self) -> None:
         return None
 
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        row = self.fetchone()
+        if row is None:
+            raise StopIteration
+        return row
+
 
 class TursoHttpConnection:
     """Drop-in for sqlite3.Connection: execute / executemany / executescript.
