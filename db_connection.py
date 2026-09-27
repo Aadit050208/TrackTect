@@ -1,27 +1,23 @@
 """SQLite / Turso connection factory.
 
-Local development: stdlib sqlite3 against data/tracktect.db (one connection
-per `with _connect()` — unchanged).
+Local development: stdlib sqlite3 against data/tracktect.db (unchanged).
 
-Production (Turso env vars set): libsql over HTTP. The libsql Python client
-wraps a Tokio runtime and is **not** safe to share across threads. Concurrent
-`connect()` / `close()` from Flask + APScheduler deadlocks the worker
-(`failed to join thread: Resource deadlock avoided`). Rules:
-
-- Never keep a process-global Turso client.
-- One Turso connection per thread, scoped to a request or scheduler job.
-- Serialize connect() and close() so two threads never start/join Tokio at once.
-- Local SQLite path is untouched.
+Production (TURSO_* set): SQL over HTTP (Hrana `/v2/pipeline`) via `requests`.
+No native libsql / Tokio client. Each statement is its own HTTP POST — nothing
+is shared across threads except immutable settings (URL + token).
 """
 
 from __future__ import annotations
 
+import base64
 import logging
 import sqlite3
-import threading
 from collections.abc import Mapping
 from contextlib import contextmanager
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Iterable, List, Optional, Sequence
+from urllib.parse import urlparse, urlunparse
+
+import requests
 
 from config import settings
 
@@ -33,10 +29,7 @@ class DatabaseUnavailable(Exception):
 
 
 class Row(Mapping):
-    """Dict-like row so existing `row['col']` / `dict(row)` code keeps working.
-
-    libsql returns plain tuples; stdlib sqlite3.Row is not settable on that client.
-    """
+    """Dict-like row so existing `row['col']` / `dict(row)` code keeps working."""
 
     def __init__(self, columns: Sequence[str], values: Sequence[Any]) -> None:
         self._columns = list(columns)
@@ -63,159 +56,6 @@ class Row(Mapping):
         return key in self._map
 
 
-def _columns_from_cursor(cursor) -> list:
-    desc = getattr(cursor, "description", None) or ()
-    return [d[0] for d in desc]
-
-
-def _raise_if_constraint(exc: BaseException) -> None:
-    text = str(exc).lower()
-    if "constraint" in text or "unique" in text:
-        raise sqlite3.IntegrityError(str(exc)) from exc
-
-
-class CursorAdapter:
-    def __init__(self, cursor) -> None:
-        self._cursor = cursor
-        self.lastrowid = getattr(cursor, "lastrowid", None)
-        self.rowcount = getattr(cursor, "rowcount", -1)
-        self.description = getattr(cursor, "description", None)
-
-    def _wrap(self, row):
-        if row is None:
-            return None
-        if isinstance(row, sqlite3.Row):
-            return row
-        if isinstance(row, Row):
-            return row
-        cols = _columns_from_cursor(self._cursor)
-        if not cols and isinstance(row, (tuple, list)):
-            cols = [str(i) for i in range(len(row))]
-        return Row(cols, row)
-
-    def fetchone(self):
-        return self._wrap(self._cursor.fetchone())
-
-    def fetchall(self):
-        return [self._wrap(r) for r in self._cursor.fetchall()]
-
-    def fetchmany(self, size=None):
-        rows = self._cursor.fetchmany(size) if size is not None else self._cursor.fetchmany()
-        return [self._wrap(r) for r in rows]
-
-    def execute(self, sql: str, params: Sequence[Any] = ()):
-        try:
-            self._cursor.execute(sql, params)
-        except ValueError as exc:
-            _raise_if_constraint(exc)
-            raise
-        self.lastrowid = getattr(self._cursor, "lastrowid", None)
-        self.description = getattr(self._cursor, "description", None)
-        return self
-
-    def executemany(self, sql: str, seq_of_params: Iterable[Sequence[Any]]):
-        try:
-            self._cursor.executemany(sql, seq_of_params)
-        except ValueError as exc:
-            _raise_if_constraint(exc)
-            raise
-        self.lastrowid = getattr(self._cursor, "lastrowid", None)
-        return self
-
-    def close(self) -> None:
-        close = getattr(self._cursor, "close", None)
-        if close:
-            close()
-
-
-class ConnectionAdapter:
-    def __init__(self, conn, *, remote: bool = False, close_on_exit: bool = True) -> None:
-        self._conn = conn
-        self.remote = remote
-        self.close_on_exit = close_on_exit
-
-    def _adapt_cursor(self, raw) -> CursorAdapter:
-        return raw if isinstance(raw, CursorAdapter) else CursorAdapter(raw)
-
-    def execute(self, sql: str, params: Sequence[Any] = ()):
-        if self.remote and sql.lstrip().upper().startswith("PRAGMA JOURNAL_MODE"):
-            return CursorAdapter(_EmptyCursor())
-        try:
-            raw = self._conn.execute(sql, params)
-        except ValueError as exc:
-            _raise_if_constraint(exc)
-            raise
-        return self._adapt_cursor(raw)
-
-    def executemany(self, sql: str, seq_of_params: Iterable[Sequence[Any]]):
-        try:
-            raw = self._conn.executemany(sql, seq_of_params)
-        except ValueError as exc:
-            _raise_if_constraint(exc)
-            raise
-        return self._adapt_cursor(raw)
-
-    def executescript(self, script: str):
-        if hasattr(self._conn, "executescript"):
-            try:
-                raw = self._conn.executescript(script)
-                return self._adapt_cursor(raw) if raw is not None else self
-            except Exception:
-                # Some remote builds reject multi-statement scripts.
-                pass
-        last = None
-        for statement in _split_sql(script):
-            last = self.execute(statement)
-        return last
-
-    def commit(self) -> None:
-        self._conn.commit()
-
-    def rollback(self) -> None:
-        rollback = getattr(self._conn, "rollback", None)
-        if rollback:
-            rollback()
-
-    def close(self) -> None:
-        raw = self._conn
-        if raw is None:
-            return
-        self._conn = None
-        # close() joins the Tokio worker — must not race another thread's connect().
-        with _turso_lifecycle_lock:
-            try:
-                raw.close()
-            except Exception:  # noqa: BLE001
-                logger.debug("Turso connection close failed", exc_info=True)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        try:
-            if exc_type is None:
-                self.commit()
-            else:
-                self.rollback()
-        finally:
-            if self.close_on_exit:
-                self.close()
-
-
-class _EmptyCursor:
-    description = None
-    lastrowid = None
-
-    def fetchone(self):
-        return None
-
-    def fetchall(self):
-        return []
-
-    def fetchmany(self, size=None):
-        return []
-
-
 def _split_sql(script: str) -> list:
     parts = []
     buf = []
@@ -237,62 +77,6 @@ def _split_sql(script: str) -> list:
 
 _unavailable = False
 _unavailable_reason = ""
-
-# Tokio runtime start/join is process-global and not thread-safe.
-_turso_lifecycle_lock = threading.Lock()
-# One live Turso client per OS thread (Flask request thread vs APScheduler thread).
-_thread_state = threading.local()
-
-
-class _ScopedCheckout:
-    """`with _connect()` during a request/job: commit, but do not destroy the client."""
-
-    def __init__(self, owner: ConnectionAdapter) -> None:
-        self._owner = owner
-
-    def __getattr__(self, name):
-        return getattr(self._owner, name)
-
-    def __enter__(self):
-        return self._owner
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        if exc_type is None:
-            self._owner.commit()
-        else:
-            self._owner.rollback()
-
-
-def enter_db_scope() -> None:
-    """Mark this thread as owning a Turso connection until exit_db_scope()."""
-    depth = getattr(_thread_state, "scope_depth", 0)
-    _thread_state.scope_depth = depth + 1
-
-
-def exit_db_scope() -> None:
-    depth = getattr(_thread_state, "scope_depth", 0) - 1
-    _thread_state.scope_depth = max(0, depth)
-    if depth <= 0:
-        release_thread_connection()
-
-
-def release_thread_connection() -> None:
-    """Close this thread's Turso client. No-op for local SQLite."""
-    owner = getattr(_thread_state, "conn", None)
-    _thread_state.conn = None
-    _thread_state.scope_depth = 0
-    if owner is not None:
-        owner.close()
-
-
-@contextmanager
-def thread_db_scope():
-    """Scheduler / init: isolate this thread's Turso client from Flask requests."""
-    enter_db_scope()
-    try:
-        yield
-    finally:
-        exit_db_scope()
 
 
 def is_available() -> bool:
@@ -316,49 +100,243 @@ def reset_availability_for_tests() -> None:
     _unavailable_reason = ""
 
 
-def _connect_turso_fresh() -> ConnectionAdapter:
-    """Create a brand-new libsql client. Caller must hold _turso_lifecycle_lock."""
-    try:
-        import libsql
-    except ImportError as exc:
-        raise DatabaseUnavailable(
-            "The libsql package is not installed. Run: pip install libsql"
-        ) from exc
-    try:
-        # _check_same_thread=True: this object must stay on the creating thread.
-        conn = libsql.connect(
-            database=settings.turso_database_url,
-            auth_token=settings.turso_auth_token,
-            timeout=20.0,
-            _check_same_thread=True,
-        )
-        conn.execute("SELECT 1")
-        return ConnectionAdapter(conn, remote=True, close_on_exit=False)
-    except DatabaseUnavailable:
-        raise
-    except TypeError:
-        # Older libsql builds may not accept _check_same_thread.
-        conn = libsql.connect(
-            database=settings.turso_database_url,
-            auth_token=settings.turso_auth_token,
-            timeout=20.0,
-        )
-        conn.execute("SELECT 1")
-        return ConnectionAdapter(conn, remote=True, close_on_exit=False)
-    except Exception as exc:  # noqa: BLE001
-        raise DatabaseUnavailable(
-            "Could not reach the hosted database. Check TURSO_DATABASE_URL and TURSO_AUTH_TOKEN."
-        ) from exc
+# Kept as no-ops so Flask / scheduler wrappers stay harmless.
+# HTTP calls are already independent — no client to scope or close.
+def enter_db_scope() -> None:
+    return None
 
 
-def _checkout_turso() -> _ScopedCheckout:
-    owner = getattr(_thread_state, "conn", None)
-    if owner is not None and getattr(owner, "_conn", None) is not None:
-        return _ScopedCheckout(owner)
-    with _turso_lifecycle_lock:
-        owner = _connect_turso_fresh()
-    _thread_state.conn = owner
-    return _ScopedCheckout(owner)
+def exit_db_scope() -> None:
+    return None
+
+
+def release_thread_connection() -> None:
+    return None
+
+
+@contextmanager
+def thread_db_scope():
+    yield
+
+
+def _pipeline_url(raw_url: str) -> str:
+    """libsql://host → https://host/v2/pipeline (Turso SQL-over-HTTP)."""
+    url = (raw_url or "").strip()
+    if not url:
+        raise DatabaseUnavailable("TURSO_DATABASE_URL is empty")
+    if url.startswith("libsql://"):
+        url = "https://" + url[len("libsql://") :]
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise DatabaseUnavailable("TURSO_DATABASE_URL must be a libsql:// or https:// host")
+    path = parsed.path.rstrip("/")
+    if path.endswith("/v2/pipeline") or path.endswith("/v3/pipeline"):
+        return urlunparse(parsed._replace(path=path, query="", fragment=""))
+    return urlunparse(parsed._replace(path="/v2/pipeline", query="", fragment=""))
+
+
+def _hrana_arg(value: Any) -> dict:
+    if value is None:
+        return {"type": "null"}
+    if isinstance(value, bool):
+        return {"type": "integer", "value": "1" if value else "0"}
+    if isinstance(value, int):
+        return {"type": "integer", "value": str(value)}
+    if isinstance(value, float):
+        return {"type": "float", "value": str(value)}
+    if isinstance(value, (bytes, bytearray)):
+        return {"type": "blob", "base64": base64.b64encode(bytes(value)).decode("ascii")}
+    return {"type": "text", "value": str(value)}
+
+
+def _decode_hrana_value(cell: Any) -> Any:
+    if cell is None:
+        return None
+    if not isinstance(cell, dict):
+        return cell
+    kind = (cell.get("type") or "").lower()
+    if kind == "null":
+        return None
+    if kind == "integer":
+        raw = cell.get("value")
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return raw
+    if kind == "float":
+        raw = cell.get("value")
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return raw
+    if kind == "blob":
+        blob = cell.get("base64") or cell.get("value") or ""
+        try:
+            return base64.b64decode(blob)
+        except (TypeError, ValueError):
+            return blob
+    return cell.get("value")
+
+
+def _raise_sql_error(message: str) -> None:
+    text = (message or "").lower()
+    if "constraint" in text or "unique" in text:
+        raise sqlite3.IntegrityError(message)
+    raise sqlite3.Error(message)
+
+
+class HttpCursor:
+    def __init__(self, columns: Sequence[str], rows: Sequence[Sequence[Any]], lastrowid=None, rowcount: int = -1):
+        self.description = [(name, None, None, None, None, None, None) for name in columns]
+        self._rows = [Row(columns, row) for row in rows]
+        self._i = 0
+        self.lastrowid = lastrowid
+        self.rowcount = rowcount
+
+    def fetchone(self):
+        if self._i >= len(self._rows):
+            return None
+        row = self._rows[self._i]
+        self._i += 1
+        return row
+
+    def fetchall(self):
+        rest = self._rows[self._i :]
+        self._i = len(self._rows)
+        return rest
+
+    def fetchmany(self, size=None):
+        if size is None:
+            size = 1
+        chunk = self._rows[self._i : self._i + size]
+        self._i += len(chunk)
+        return chunk
+
+    def close(self) -> None:
+        return None
+
+
+class TursoHttpConnection:
+    """Drop-in for sqlite3.Connection: execute / executemany / executescript.
+
+    Every call is an independent POST to /v2/pipeline (execute + close).
+    No persistent stream, no shared client, no native runtime.
+    """
+
+    def __init__(self, database_url: str, auth_token: str) -> None:
+        self._url = _pipeline_url(database_url)
+        self._token = auth_token
+        self.lastrowid = None
+
+    def _post_pipeline(self, requests_body: List[dict]) -> dict:
+        try:
+            response = requests.post(
+                self._url,
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    "Content-Type": "application/json",
+                },
+                json={"requests": requests_body},
+                timeout=25,
+            )
+        except requests.exceptions.RequestException as exc:
+            raise DatabaseUnavailable(
+                "Could not reach the hosted database over HTTP."
+            ) from exc
+        if response.status_code in (401, 403):
+            raise DatabaseUnavailable(
+                "Hosted database rejected the auth token (HTTP %s)." % response.status_code
+            )
+        if response.status_code >= 400:
+            raise DatabaseUnavailable(
+                f"Hosted database HTTP {response.status_code}"
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise DatabaseUnavailable("Hosted database returned invalid JSON") from exc
+
+    def _execute_pipeline(self, stmts: List[dict]) -> List[dict]:
+        payload = [{"type": "execute", "stmt": stmt} for stmt in stmts]
+        payload.append({"type": "close"})
+        data = self._post_pipeline(payload)
+        results = data.get("results") or []
+        out = []
+        for item in results:
+            if item.get("type") == "error":
+                err = item.get("error") or {}
+                _raise_sql_error(err.get("message") or str(err) or "SQL error")
+            resp = item.get("response") or {}
+            if resp.get("type") == "execute":
+                result = resp.get("result") or {}
+                if result.get("error"):
+                    _raise_sql_error(str(result["error"]))
+                out.append(result)
+        return out
+
+    def execute(self, sql: str, params: Sequence[Any] = ()):
+        if sql.lstrip().upper().startswith("PRAGMA JOURNAL_MODE"):
+            return HttpCursor([], [])
+        stmt: dict = {"sql": sql}
+        if params:
+            stmt["args"] = [_hrana_arg(p) for p in params]
+        results = self._execute_pipeline([stmt])
+        return self._cursor_from_result(results[-1] if results else {})
+
+    def executemany(self, sql: str, seq_of_params: Iterable[Sequence[Any]]):
+        stmts = [{"sql": sql, "args": [_hrana_arg(p) for p in row]} for row in seq_of_params]
+        if not stmts:
+            return HttpCursor([], [])
+        results = self._execute_pipeline(stmts)
+        return self._cursor_from_result(results[-1] if results else {})
+
+    def executescript(self, script: str):
+        statements = _split_sql(script)
+        last = HttpCursor([], [])
+        # Batch to keep init reasonably fast without one huge payload.
+        chunk_size = 20
+        for i in range(0, len(statements), chunk_size):
+            chunk = [{"sql": s} for s in statements[i : i + chunk_size]]
+            results = self._execute_pipeline(chunk)
+            if results:
+                last = self._cursor_from_result(results[-1])
+        return last
+
+    def _cursor_from_result(self, result: dict) -> HttpCursor:
+        cols = [c.get("name") or "" for c in (result.get("cols") or [])]
+        rows = []
+        for raw_row in result.get("rows") or []:
+            rows.append([_decode_hrana_value(cell) for cell in raw_row])
+        last_id = result.get("last_insert_rowid")
+        if last_id is not None and last_id != "":
+            try:
+                last_id = int(last_id)
+            except (TypeError, ValueError):
+                pass
+        else:
+            last_id = None
+        self.lastrowid = last_id
+        affected = result.get("affected_row_count")
+        try:
+            rowcount = int(affected) if affected is not None else -1
+        except (TypeError, ValueError):
+            rowcount = -1
+        return HttpCursor(cols, rows, lastrowid=last_id, rowcount=rowcount)
+
+    def commit(self) -> None:
+        return None
+
+    def rollback(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
 
 
 def _connect_local() -> sqlite3.Connection:
@@ -368,12 +346,14 @@ def _connect_local() -> sqlite3.Connection:
     return conn
 
 
-def connect():
-    """Open a DB connection. Raises DatabaseUnavailable when remote is required but down.
+def _connect_turso() -> TursoHttpConnection:
+    if not settings.turso_auth_token:
+        raise DatabaseUnavailable("TURSO_AUTH_TOKEN is empty")
+    return TursoHttpConnection(settings.turso_database_url, settings.turso_auth_token)
 
-    Turso: reuse this thread's client for the current request/job (never share
-    it with another thread). Local SQLite: a new stdlib connection every call.
-    """
+
+def connect():
+    """Open a DB connection. Raises DatabaseUnavailable when remote is required but down."""
     if _unavailable:
         raise DatabaseUnavailable(_unavailable_reason or "Database unavailable")
 
@@ -387,35 +367,9 @@ def connect():
 
     if settings.use_turso:
         try:
-            checkout = _checkout_turso()
-            if getattr(_thread_state, "scope_depth", 0) <= 0:
-                # CLI / one-off: open, use, close in this `with` block only.
-                return _UnscopedTurso(checkout._owner)
-            return checkout
+            return _connect_turso()
         except DatabaseUnavailable as exc:
             mark_unavailable(exc)
             raise
 
     return _connect_local()
-
-
-class _UnscopedTurso:
-    """Single db.py call outside a request/job: close the client when the `with` ends."""
-
-    def __init__(self, owner: ConnectionAdapter) -> None:
-        self._owner = owner
-
-    def __getattr__(self, name):
-        return getattr(self._owner, name)
-
-    def __enter__(self):
-        return self._owner
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        try:
-            if exc_type is None:
-                self._owner.commit()
-            else:
-                self._owner.rollback()
-        finally:
-            release_thread_connection()

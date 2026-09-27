@@ -9,5 +9,4 @@ curl_cffi
 apscheduler
 yfinance
 vaderSentiment
-libsql
 gunicorn

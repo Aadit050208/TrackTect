@@ -50,8 +50,8 @@ copy .env.example .env           # then fill in your values
 - `NOTIFY_WEBHOOK_URL` — optional webhook that receives high-priority alerts.
 - `SECRET_KEY` — Flask session key.
 - `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` — required on Render. Hosted
-  SQLite so accounts and run history survive service restarts. Leave empty
-  for local development (`data/tracktect.db`).
+  SQLite so accounts and run history survive service restarts (SQL over
+  HTTP — no native client). Leave empty for local development (`data/tracktect.db`).
 
 Twitter/YouTube agents need Chrome installed (Selenium + webdriver-manager
 handle the driver). Without Chrome those agents are skipped gracefully.
