@@ -73,6 +73,12 @@ def _require_database():
 
 @app.errorhandler(DatabaseUnavailable)
 def _database_unavailable(_exc):
+    logger.exception(
+        "DatabaseUnavailable raised during request %s %s: %s",
+        request.method,
+        request.path,
+        _exc,
+    )
     return render_template("unavailable.html"), 503
 
 
