@@ -1,8 +1,8 @@
 """SQLite persistence layer for TrackTect.
 
-Plain `sqlite3` (stdlib, no external DB). Stores users, tracked competitors,
-timestamped run history, classified insights per run, landing-page diffs per
-run, social items, alerts, tags, saved views, digests, and suggestions.
+Uses stdlib sqlite3 locally, or Turso (libSQL) when TURSO_* env vars are set
+so data survives host restarts. Stores users, tracked competitors, run history,
+insights, diffs, social items, alerts, tags, views, digests, and suggestions.
 """
 
 import json
@@ -12,6 +12,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Sequence
 
 from config import settings
+from db_connection import (
+    DatabaseUnavailable,
+    connect as _open_connection,
+    is_available,
+    mark_unavailable,
+    unavailable_reason,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -201,6 +208,12 @@ CREATE TABLE IF NOT EXISTS insight_decisions (
     owner TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS messaging_snapshots (
+    url TEXT PRIMARY KEY,
+    lines TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL
+);
 """
 
 # Columns added after the initial schema — applied idempotently on startup.
@@ -231,31 +244,36 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(settings.db_path, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+def _connect():
+    """Open a connection. Local file when Turso is unset; Turso otherwise."""
+    return _open_connection()
 
 
-def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+def _column_exists(conn, table: str, column: str) -> bool:
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     return any(r["name"] == column for r in rows)
 
 
 def init_db() -> None:
-    with _connect() as conn:
-        conn.executescript(_SCHEMA)
-        for table, column, typedef in _MIGRATIONS:
-            if not _column_exists(conn, table, column):
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {typedef}")
-        # Backfill defaults for existing users created before quota columns.
-        conn.execute(
-            "UPDATE users SET usage_quota = ? WHERE usage_quota IS NULL",
-            (settings.default_user_quota,),
-        )
-        conn.execute("UPDATE users SET usage_count = 0 WHERE usage_count IS NULL")
-        _sync_admin_flags(conn)
+    """Apply schema. On Turso failure, mark DB down instead of using a wipeable local file."""
+    try:
+        with _connect() as conn:
+            conn.executescript(_SCHEMA)
+            for table, column, typedef in _MIGRATIONS:
+                if not _column_exists(conn, table, column):
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {typedef}")
+            # Backfill defaults for existing users created before quota columns.
+            conn.execute(
+                "UPDATE users SET usage_quota = ? WHERE usage_quota IS NULL",
+                (settings.default_user_quota,),
+            )
+            conn.execute("UPDATE users SET usage_count = 0 WHERE usage_count IS NULL")
+            _sync_admin_flags(conn)
+        backend = "Turso (libSQL)" if settings.use_turso else f"local SQLite ({settings.db_path})"
+        import logging
+        logging.getLogger(__name__).info("Database ready: %s", backend)
+    except DatabaseUnavailable as exc:
+        mark_unavailable(exc)
 
 
 def _sync_admin_flags(conn: sqlite3.Connection) -> None:
@@ -2010,3 +2028,28 @@ def competitor_snapshot_for_battlecard(competitor_id: int, days: int = 60) -> Di
         "insights": insights,
         "days": days,
     }
+
+
+def load_messaging_snapshots() -> Dict[str, List]:
+    """Landing-page text snapshots — stored in the DB so they survive host restarts."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT url, lines FROM messaging_snapshots").fetchall()
+    out: Dict[str, List] = {}
+    for row in rows:
+        try:
+            out[row["url"]] = json.loads(row["lines"] or "[]")
+        except (TypeError, ValueError):
+            out[row["url"]] = []
+    return out
+
+
+def save_messaging_snapshot(url: str, lines: List[str]) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO messaging_snapshots (url, lines, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(url) DO UPDATE SET
+                 lines = excluded.lines,
+                 updated_at = excluded.updated_at""",
+            (url, json.dumps(lines, ensure_ascii=False), _now()),
+        )

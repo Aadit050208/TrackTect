@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Temporarily unavailable · TrackTect</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}?v=2">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<script>
+  if (localStorage.getItem('tracktect-theme') !== 'dark') {
+    document.documentElement.setAttribute('data-light', '1');
+    document.body.classList.add('light');
+  }
+</script>
+<div class="auth-wrap">
+  <div class="auth-box">
+    <div class="brand">
+      <img class="brand-logo" src="{{ url_for('static', filename='img/logo.png') }}?v=2" alt="" width="44" height="44">
+      TrackTect
+    </div>
+    <div class="panel">
+      <h1>Service temporarily unavailable</h1>
+      <p class="dim" style="margin-top:0">
+        We can’t reach the database right now. Your account data is safe — this is a
+        connection issue, not a wipe. Please try again in a minute.
+      </p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

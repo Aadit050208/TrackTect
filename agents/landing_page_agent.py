@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 import requests
 from bs4 import BeautifulSoup
 
+import db
 from agents.http_text import decode_response_text, safe_accept_encoding
 from config import settings
 from url_utils import normalize_url
@@ -91,18 +92,28 @@ class LandingPageWatcherAgent:
 
     def load_snapshots(self) -> Dict[str, List[str]]:
         try:
+            stored = db.load_messaging_snapshots()
+            if stored:
+                return stored
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to load snapshots from database: %s", exc)
+        # One-time local-file import (dev machines that still have the JSON).
+        try:
             content = self.snapshot_file.read_text(encoding="utf-8").strip()
-            return json.loads(content) if content else {}
-        except (OSError, json.JSONDecodeError) as exc:
+            data = json.loads(content) if content else {}
+            if isinstance(data, dict) and data:
+                for url, lines in data.items():
+                    if isinstance(lines, list):
+                        db.save_messaging_snapshot(url, lines)
+                return {k: v for k, v in data.items() if isinstance(v, list)}
+        except (OSError, json.JSONDecodeError, Exception) as exc:
             logger.warning("Failed to load snapshot file: %s", exc)
-            return {}
+        return {}
 
     def save_snapshot(self, url: str, lines: List[str]) -> None:
-        data = self.load_snapshots()
-        data[url] = lines
         try:
-            self.snapshot_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except OSError as exc:
+            db.save_messaging_snapshot(url, lines)
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to save snapshot for %s: %s", url, exc)
 
     @staticmethod

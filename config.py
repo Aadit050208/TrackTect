@@ -94,6 +94,24 @@ class Settings:
         self.db_path: Path = DATA_DIR / "tracktect.db"
         self.snapshot_file: Path = DATA_DIR / "messaging_snapshots.json"
 
+        # Hosted SQLite (Turso / libSQL). Both must be set to use the remote DB.
+        # Local `python app.py` without these still uses data/tracktect.db.
+        self.turso_database_url: str = _env("TURSO_DATABASE_URL")
+        self.turso_auth_token: str = _env("TURSO_AUTH_TOKEN")
+        # Render sets RENDER=true. Never use the wipeable local file there.
+        self.on_render: bool = bool(_env("RENDER") or _env("RENDER_SERVICE_ID"))
+        self.require_remote_db: bool = (
+            _env("REQUIRE_TURSO", "0") == "1" or self.on_render
+        )
+
+    @property
+    def turso_configured(self) -> bool:
+        return bool(self.turso_database_url and self.turso_auth_token)
+
+    @property
+    def use_turso(self) -> bool:
+        return self.turso_configured
+
     @property
     def notion_configured(self) -> bool:
         return bool(self.notion_token and self.notion_page_id)

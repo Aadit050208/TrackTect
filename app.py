@@ -16,6 +16,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import auth_security
 import db
+from db_connection import DatabaseUnavailable
 import digests
 import pm_exports
 import scheduler
@@ -41,6 +42,22 @@ if auth_security.is_weak_secret_key(settings.secret_key):
     )
 
 db.init_db()
+
+
+@app.before_request
+def _require_database():
+    """Never serve app pages against a missing/wiped local file in production."""
+    if request.endpoint == "static":
+        return None
+    if db.is_available():
+        return None
+    logger.error("Database down: %s", db.unavailable_reason())
+    return render_template("unavailable.html"), 503
+
+
+@app.errorhandler(DatabaseUnavailable)
+def _database_unavailable(_exc):
+    return render_template("unavailable.html"), 503
 
 
 # ------------------------------------------------------------- helpers ----
@@ -123,7 +140,7 @@ def domain(url: str) -> str:
 
 @app.context_processor
 def inject_shell():
-    if "user_id" not in session:
+    if not db.is_available() or "user_id" not in session:
         return {
             "sidebar_competitors": [],
             "sidebar_views": [],
@@ -1219,6 +1236,9 @@ def quarterly_review():
 def _start_scheduler_once() -> None:
     import os
     if settings.debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        return
+    if not db.is_available():
+        logger.error("Scheduler not started — database is unavailable")
         return
     scheduler.start()
 
