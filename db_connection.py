@@ -23,6 +23,9 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+# Turso /v2/pipeline rejects oversized request arrays (HTTP 400).
+PIPELINE_CHUNK_SIZE = 20
+
 
 class DatabaseUnavailable(Exception):
     """Remote DB is required but cannot be reached. Do not use a local file."""
@@ -252,13 +255,17 @@ class TursoHttpConnection:
             raise DatabaseUnavailable(
                 "Could not reach the hosted database over HTTP."
             ) from exc
-        if response.status_code in (401, 403):
-            raise DatabaseUnavailable(
-                "Hosted database rejected the auth token (HTTP %s)." % response.status_code
-            )
         if response.status_code >= 400:
+            try:
+                detail = response.json()
+            except ValueError:
+                detail = (response.text or "")[:500]
+            if response.status_code in (401, 403):
+                raise DatabaseUnavailable(
+                    f"Hosted database rejected the auth token (HTTP {response.status_code}): {detail}"
+                )
             raise DatabaseUnavailable(
-                f"Hosted database HTTP {response.status_code}"
+                f"Hosted database HTTP {response.status_code}: {detail}"
             )
         try:
             return response.json()
@@ -296,16 +303,19 @@ class TursoHttpConnection:
         stmts = [{"sql": sql, "args": [_hrana_arg(p) for p in row]} for row in seq_of_params]
         if not stmts:
             return HttpCursor([], [])
-        results = self._execute_pipeline(stmts)
-        return self._cursor_from_result(results[-1] if results else {})
+        last = HttpCursor([], [])
+        for i in range(0, len(stmts), PIPELINE_CHUNK_SIZE):
+            chunk = stmts[i : i + PIPELINE_CHUNK_SIZE]
+            results = self._execute_pipeline(chunk)
+            if results:
+                last = self._cursor_from_result(results[-1])
+        return last
 
     def executescript(self, script: str):
         statements = _split_sql(script)
         last = HttpCursor([], [])
-        # Batch to keep init reasonably fast without one huge payload.
-        chunk_size = 20
-        for i in range(0, len(statements), chunk_size):
-            chunk = [{"sql": s} for s in statements[i : i + chunk_size]]
+        for i in range(0, len(statements), PIPELINE_CHUNK_SIZE):
+            chunk = [{"sql": s} for s in statements[i : i + PIPELINE_CHUNK_SIZE]]
             results = self._execute_pipeline(chunk)
             if results:
                 last = self._cursor_from_result(results[-1])
