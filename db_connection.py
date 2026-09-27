@@ -146,7 +146,7 @@ def _hrana_arg(value: Any) -> dict:
     if isinstance(value, int):
         return {"type": "integer", "value": str(value)}
     if isinstance(value, float):
-        return {"type": "float", "value": str(value)}
+        return {"type": "float", "value": value}
     if isinstance(value, (bytes, bytearray)):
         return {"type": "blob", "base64": base64.b64encode(bytes(value)).decode("ascii")}
     return {"type": "text", "value": str(value)}
