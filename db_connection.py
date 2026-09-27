@@ -1,15 +1,26 @@
 """SQLite / Turso connection factory.
 
-Local development: stdlib sqlite3 against data/tracktect.db.
-Production (Turso env vars set): libsql over HTTP. Failures never fall back
-to a local file — that file is wiped on Render restarts.
+Local development: stdlib sqlite3 against data/tracktect.db (one connection
+per `with _connect()` — unchanged).
+
+Production (Turso env vars set): libsql over HTTP. The libsql Python client
+wraps a Tokio runtime and is **not** safe to share across threads. Concurrent
+`connect()` / `close()` from Flask + APScheduler deadlocks the worker
+(`failed to join thread: Resource deadlock avoided`). Rules:
+
+- Never keep a process-global Turso client.
+- One Turso connection per thread, scoped to a request or scheduler job.
+- Serialize connect() and close() so two threads never start/join Tokio at once.
+- Local SQLite path is untouched.
 """
 
 from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from collections.abc import Mapping
+from contextlib import contextmanager
 from typing import Any, Iterable, Optional, Sequence
 
 from config import settings
@@ -118,9 +129,10 @@ class CursorAdapter:
 
 
 class ConnectionAdapter:
-    def __init__(self, conn, *, remote: bool = False) -> None:
+    def __init__(self, conn, *, remote: bool = False, close_on_exit: bool = True) -> None:
         self._conn = conn
         self.remote = remote
+        self.close_on_exit = close_on_exit
 
     def _adapt_cursor(self, raw) -> CursorAdapter:
         return raw if isinstance(raw, CursorAdapter) else CursorAdapter(raw)
@@ -165,7 +177,16 @@ class ConnectionAdapter:
             rollback()
 
     def close(self) -> None:
-        self._conn.close()
+        raw = self._conn
+        if raw is None:
+            return
+        self._conn = None
+        # close() joins the Tokio worker — must not race another thread's connect().
+        with _turso_lifecycle_lock:
+            try:
+                raw.close()
+            except Exception:  # noqa: BLE001
+                logger.debug("Turso connection close failed", exc_info=True)
 
     def __enter__(self):
         return self
@@ -177,7 +198,8 @@ class ConnectionAdapter:
             else:
                 self.rollback()
         finally:
-            self.close()
+            if self.close_on_exit:
+                self.close()
 
 
 class _EmptyCursor:
@@ -216,6 +238,62 @@ def _split_sql(script: str) -> list:
 _unavailable = False
 _unavailable_reason = ""
 
+# Tokio runtime start/join is process-global and not thread-safe.
+_turso_lifecycle_lock = threading.Lock()
+# One live Turso client per OS thread (Flask request thread vs APScheduler thread).
+_thread_state = threading.local()
+
+
+class _ScopedCheckout:
+    """`with _connect()` during a request/job: commit, but do not destroy the client."""
+
+    def __init__(self, owner: ConnectionAdapter) -> None:
+        self._owner = owner
+
+    def __getattr__(self, name):
+        return getattr(self._owner, name)
+
+    def __enter__(self):
+        return self._owner
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if exc_type is None:
+            self._owner.commit()
+        else:
+            self._owner.rollback()
+
+
+def enter_db_scope() -> None:
+    """Mark this thread as owning a Turso connection until exit_db_scope()."""
+    depth = getattr(_thread_state, "scope_depth", 0)
+    _thread_state.scope_depth = depth + 1
+
+
+def exit_db_scope() -> None:
+    depth = getattr(_thread_state, "scope_depth", 0) - 1
+    _thread_state.scope_depth = max(0, depth)
+    if depth <= 0:
+        release_thread_connection()
+
+
+def release_thread_connection() -> None:
+    """Close this thread's Turso client. No-op for local SQLite."""
+    owner = getattr(_thread_state, "conn", None)
+    _thread_state.conn = None
+    _thread_state.scope_depth = 0
+    if owner is not None:
+        owner.close()
+
+
+@contextmanager
+def thread_db_scope():
+    """Scheduler / init: isolate this thread's Turso client from Flask requests."""
+    enter_db_scope()
+    try:
+        yield
+    finally:
+        exit_db_scope()
+
 
 def is_available() -> bool:
     return not _unavailable
@@ -238,7 +316,8 @@ def reset_availability_for_tests() -> None:
     _unavailable_reason = ""
 
 
-def _connect_turso():
+def _connect_turso_fresh() -> ConnectionAdapter:
+    """Create a brand-new libsql client. Caller must hold _turso_lifecycle_lock."""
     try:
         import libsql
     except ImportError as exc:
@@ -246,20 +325,40 @@ def _connect_turso():
             "The libsql package is not installed. Run: pip install libsql"
         ) from exc
     try:
+        # _check_same_thread=True: this object must stay on the creating thread.
+        conn = libsql.connect(
+            database=settings.turso_database_url,
+            auth_token=settings.turso_auth_token,
+            timeout=20.0,
+            _check_same_thread=True,
+        )
+        conn.execute("SELECT 1")
+        return ConnectionAdapter(conn, remote=True, close_on_exit=False)
+    except DatabaseUnavailable:
+        raise
+    except TypeError:
+        # Older libsql builds may not accept _check_same_thread.
         conn = libsql.connect(
             database=settings.turso_database_url,
             auth_token=settings.turso_auth_token,
             timeout=20.0,
         )
-        # Cheap ping so a bad token fails now, not on the first user request.
         conn.execute("SELECT 1")
-        return ConnectionAdapter(conn, remote=True)
-    except DatabaseUnavailable:
-        raise
+        return ConnectionAdapter(conn, remote=True, close_on_exit=False)
     except Exception as exc:  # noqa: BLE001
         raise DatabaseUnavailable(
             "Could not reach the hosted database. Check TURSO_DATABASE_URL and TURSO_AUTH_TOKEN."
         ) from exc
+
+
+def _checkout_turso() -> _ScopedCheckout:
+    owner = getattr(_thread_state, "conn", None)
+    if owner is not None and getattr(owner, "_conn", None) is not None:
+        return _ScopedCheckout(owner)
+    with _turso_lifecycle_lock:
+        owner = _connect_turso_fresh()
+    _thread_state.conn = owner
+    return _ScopedCheckout(owner)
 
 
 def _connect_local() -> sqlite3.Connection:
@@ -270,7 +369,11 @@ def _connect_local() -> sqlite3.Connection:
 
 
 def connect():
-    """Open a DB connection. Raises DatabaseUnavailable when remote is required but down."""
+    """Open a DB connection. Raises DatabaseUnavailable when remote is required but down.
+
+    Turso: reuse this thread's client for the current request/job (never share
+    it with another thread). Local SQLite: a new stdlib connection every call.
+    """
     if _unavailable:
         raise DatabaseUnavailable(_unavailable_reason or "Database unavailable")
 
@@ -284,9 +387,35 @@ def connect():
 
     if settings.use_turso:
         try:
-            return _connect_turso()
+            checkout = _checkout_turso()
+            if getattr(_thread_state, "scope_depth", 0) <= 0:
+                # CLI / one-off: open, use, close in this `with` block only.
+                return _UnscopedTurso(checkout._owner)
+            return checkout
         except DatabaseUnavailable as exc:
             mark_unavailable(exc)
             raise
 
     return _connect_local()
+
+
+class _UnscopedTurso:
+    """Single db.py call outside a request/job: close the client when the `with` ends."""
+
+    def __init__(self, owner: ConnectionAdapter) -> None:
+        self._owner = owner
+
+    def __getattr__(self, name):
+        return getattr(self._owner, name)
+
+    def __enter__(self):
+        return self._owner
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            if exc_type is None:
+                self._owner.commit()
+            else:
+                self._owner.rollback()
+        finally:
+            release_thread_connection()

@@ -16,6 +16,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import auth_security
 import db
+import db_connection
 from db_connection import DatabaseUnavailable
 import digests
 import pm_exports
@@ -42,6 +43,21 @@ if auth_security.is_weak_secret_key(settings.secret_key):
     )
 
 db.init_db()
+
+
+@app.before_request
+def _begin_db_scope():
+    """One Turso client for this Flask thread; closed in teardown. Isolated from APScheduler."""
+    if request.endpoint == "static":
+        return None
+    db_connection.enter_db_scope()
+
+
+@app.teardown_request
+def _end_db_scope(_exc):
+    if request.endpoint == "static":
+        return
+    db_connection.exit_db_scope()
 
 
 @app.before_request

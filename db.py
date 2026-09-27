@@ -17,6 +17,7 @@ from db_connection import (
     connect as _open_connection,
     is_available,
     mark_unavailable,
+    thread_db_scope,
     unavailable_reason,
 )
 
@@ -257,18 +258,18 @@ def _column_exists(conn, table: str, column: str) -> bool:
 def init_db() -> None:
     """Apply schema. On Turso failure, mark DB down instead of using a wipeable local file."""
     try:
-        with _connect() as conn:
-            conn.executescript(_SCHEMA)
-            for table, column, typedef in _MIGRATIONS:
-                if not _column_exists(conn, table, column):
-                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {typedef}")
-            # Backfill defaults for existing users created before quota columns.
-            conn.execute(
-                "UPDATE users SET usage_quota = ? WHERE usage_quota IS NULL",
-                (settings.default_user_quota,),
-            )
-            conn.execute("UPDATE users SET usage_count = 0 WHERE usage_count IS NULL")
-            _sync_admin_flags(conn)
+        with thread_db_scope():
+            with _connect() as conn:
+                conn.executescript(_SCHEMA)
+                for table, column, typedef in _MIGRATIONS:
+                    if not _column_exists(conn, table, column):
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {typedef}")
+                conn.execute(
+                    "UPDATE users SET usage_quota = ? WHERE usage_quota IS NULL",
+                    (settings.default_user_quota,),
+                )
+                conn.execute("UPDATE users SET usage_count = 0 WHERE usage_count IS NULL")
+                _sync_admin_flags(conn)
         backend = "Turso (libSQL)" if settings.use_turso else f"local SQLite ({settings.db_path})"
         import logging
         logging.getLogger(__name__).info("Database ready: %s", backend)
