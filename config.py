@@ -84,6 +84,13 @@ class Settings:
         except ValueError:
             self.fetch_failure_threshold: int = 3
 
+        # Longer pipeline runs (broader discovery) need a higher worker timeout in prod.
+        # Example: gunicorn -b 0.0.0.0:$PORT -t $GUNICORN_TIMEOUT app:app
+        try:
+            self.gunicorn_timeout: int = max(60, int(_env("GUNICORN_TIMEOUT", "180") or "180"))
+        except ValueError:
+            self.gunicorn_timeout = 180
+
         # Flask
         self.secret_key: str = _env("SECRET_KEY", "dev-insecure-secret-change-me")
         self.debug: bool = _env("FLASK_DEBUG", "0") == "1"

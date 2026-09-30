@@ -13,7 +13,7 @@
     <form method="POST" action="{{ url_for('competitor_run', competitor_id=competitor.id) }}"
           data-busy="1"
           data-busy-title="Checking for updates…"
-          data-busy-detail="Reading their site, news, and social pages. Hang tight — this runs on the server.">
+          data-busy-detail="Still gathering sources — this one's thorough. Pricing, careers, press, and news can take a bit longer.">
       <button class="btn" type="submit" data-busy-label="Checking…" data-cost="1"
               data-cost-label="Check now uses 1 search. Continue?"
               {% if quota_left <= 0 %}disabled title="{{ quota_label }}"{% endif %}>

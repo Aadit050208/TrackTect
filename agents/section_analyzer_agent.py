@@ -8,9 +8,7 @@ never block the section view.
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Dict, List, Optional
 
 from agents.categories import CATEGORY_TO_SECTION, PM_SECTIONS
@@ -122,8 +120,10 @@ class SectionAnalyzerAgent:
 
         prompt = f"""You are writing a PM competitor brief for {competitor_name or url or 'a competitor'}.
 
-Return ONLY a JSON array. Each object:
-- "section": one of {", ".join(PM_SECTIONS)}
+Return ONLY a JSON object with this shape:
+{{"sections": [{{"section": "...", "summary": "...", "bullets": ["..."]}}]}}
+
+Each "section" must be one of: {", ".join(PM_SECTIONS)}
 - "summary": one short sentence of what changed / is notable
 - "bullets": 1-4 short concrete bullets
 
@@ -136,22 +136,20 @@ Page excerpt:
 \"\"\"{(page_text or '')[:1600]}\"\"\"
 """
         raw = self.llm.chat(
-            system="You output only valid JSON arrays for PM section briefs.",
+            system="You output only a valid JSON object with a sections array for PM briefs.",
             user=prompt,
             temperature=0.3,
             max_tokens=500,
+            json_mode=True,
         )
         if not raw:
             return None
 
-        try:
-            cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
-            match = re.search(r"\[.*\]", cleaned, flags=re.DOTALL)
-            parsed = json.loads(match.group(0) if match else cleaned)
-            if not isinstance(parsed, list):
-                return None
-        except (json.JSONDecodeError, ValueError):
-            logger.warning("Section analyzer returned unusable JSON")
+        from compare_analysis import parse_json_array, log_unusable_json
+
+        parsed = parse_json_array(raw)
+        if not isinstance(parsed, list):
+            log_unusable_json("Section analyzer", raw)
             return None
 
         results: List[Dict] = []

@@ -15,6 +15,7 @@ from flask import (Flask, Response, abort, flash, redirect, render_template,
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import auth_security
+import compare_analysis
 import db
 import db_connection
 from db_connection import DatabaseUnavailable
@@ -110,6 +111,15 @@ def _own_competitor_or_404(competitor_id: int):
     if competitor is None or competitor["user_id"] != session["user_id"] or not competitor["active"]:
         abort(404)
     return competitor
+
+
+def _prepare_compare_analysis(payload, pack_a, pack_b, a_id, b_id):
+    """Validate + evidence-ground + orient a stored or fresh analysis for render."""
+    analysis = compare_analysis.validate_analysis(payload)
+    analysis = compare_analysis.ground_analysis(
+        analysis, compare_analysis.known_evidence_refs(pack_a, pack_b)
+    )
+    return compare_analysis.orient_analysis(analysis, a_id, b_id)
 
 
 def _parse_id_list(raw) -> list:
@@ -726,22 +736,154 @@ def compare():
     selected = []
     data = None
     days = 14
+    analysis = None
+    analysis_state = None
+    analysis_generated_at = None
+    analysis_source = None
+    analysis_notice = None
+    missing_runs = []
+    pair = []
+    evidence_map = {}
+    uid = session["user_id"]
+
     if request.method == "POST":
         selected = _parse_id_list(request.form.getlist("competitor_ids"))[:3]
         try:
             days = max(1, int(request.form.get("days", 14)))
         except ValueError:
             days = 14
-        # Ownership
+        intent = (request.form.get("intent") or "compare").strip()
         selected = [
             cid for cid in selected
-            if (c := db.get_competitor(cid)) and c["user_id"] == session["user_id"]
+            if (c := db.get_competitor(cid)) and c["user_id"] == uid
         ]
         if len(selected) < 2:
             flash("Pick at least 2 competitors to compare.", "error")
         else:
             data = db.comparison_data(selected, days=days)
-    return render_template("compare.html", competitors=comps, selected=selected, data=data, days=days)
+            if len(selected) == 2:
+                a_id, b_id = selected[0], selected[1]
+                packs = db.comparison_analysis_inputs(selected, days)
+                pack_a = packs.get(a_id) or {}
+                pack_b = packs.get(b_id) or {}
+                name_a = (pack_a.get("competitor") or {}).get("name") or "Company A"
+                name_b = (pack_b.get("competitor") or {}).get("name") or "Company B"
+                pair = [
+                    pack_a.get("competitor") or {"id": a_id, "name": name_a},
+                    pack_b.get("competitor") or {"id": b_id, "name": name_b},
+                ]
+                evidence_map = compare_analysis.evidence_index(pack_a, pack_b)
+                missing_runs = [
+                    p.get("competitor")
+                    for p in (pack_a, pack_b)
+                    if p and not p.get("has_completed_run") and p.get("competitor")
+                ]
+                if missing_runs:
+                    analysis_state = "missing_runs"
+                else:
+                    cached = db.get_compare_analysis(uid, a_id, b_id, days)
+                    mtime = db.comparison_insights_mtime(selected, days)
+                    cache_fresh = False
+                    cached_payload = None
+                    if cached:
+                        try:
+                            cached_payload = json.loads(cached.get("analysis_json") or "")
+                        except (TypeError, ValueError):
+                            cached_payload = None
+                        if isinstance(cached_payload, dict):
+                            created = cached.get("created_at") or ""
+                            cache_fresh = (not mtime) or (created >= mtime)
+
+                    want_run = intent in ("analyze", "regenerate")
+                    if want_run and intent == "analyze" and cache_fresh and cached_payload:
+                        want_run = False
+
+                    if want_run:
+                        ok, err = usage_mod.try_consume(uid)
+                        if not ok:
+                            flash(err or usage_mod.quota_exhausted_message(uid), "error")
+                            analysis_state = (
+                                "ready" if cache_fresh and cached_payload else "need_generate"
+                            )
+                            if cache_fresh and cached_payload:
+                                analysis = _prepare_compare_analysis(
+                                    cached_payload, pack_a, pack_b, a_id, b_id
+                                )
+                                analysis_generated_at = cached.get("created_at")
+                                analysis_source = cached.get("source") or "ai"
+                                analysis_notice = analysis.get("notice") or ""
+                        else:
+                            try:
+                                built = compare_analysis.generate_analysis(
+                                    pack_a,
+                                    pack_b,
+                                    name_a=name_a,
+                                    name_b=name_b,
+                                    a_id=a_id,
+                                    b_id=b_id,
+                                    days=days,
+                                )
+                            except DatabaseUnavailable:
+                                raise
+                            except Exception:
+                                logger.exception("Compare analysis failed; using count-based summary")
+                                built = compare_analysis.fallback_analysis(
+                                    pack_a, pack_b, name_a, name_b, days
+                                )
+                                built["source"] = "fallback"
+                                built["a_id"] = a_id
+                                built["b_id"] = b_id
+                                built = compare_analysis.ground_analysis(
+                                    built,
+                                    compare_analysis.known_evidence_refs(pack_a, pack_b),
+                                )
+                            saved_at = db.save_compare_analysis(
+                                uid,
+                                a_id,
+                                b_id,
+                                days,
+                                json.dumps(built, ensure_ascii=False),
+                                source=built.get("source") or "ai",
+                            )
+                            analysis = built
+                            analysis_state = "ready"
+                            analysis_generated_at = saved_at
+                            analysis_source = built.get("source") or "ai"
+                            analysis_notice = built.get("notice") or ""
+                            if analysis_source == "fallback":
+                                flash(
+                                    "Showing a data-based snapshot of stored changes — "
+                                    "dimensions without a fair comparison are marked accordingly.",
+                                    "ok",
+                                )
+                            else:
+                                flash("Head-to-head ready — used 1 search.", "ok")
+                    elif cache_fresh and cached_payload:
+                        analysis = _prepare_compare_analysis(
+                            cached_payload, pack_a, pack_b, a_id, b_id
+                        )
+                        analysis_state = "ready"
+                        analysis_generated_at = cached.get("created_at")
+                        analysis_source = cached.get("source") or "ai"
+                        analysis_notice = analysis.get("notice") or ""
+                    else:
+                        analysis_state = "need_generate"
+
+    return render_template(
+        "compare.html",
+        competitors=comps,
+        selected=selected,
+        data=data,
+        days=days,
+        analysis=analysis,
+        analysis_state=analysis_state,
+        analysis_generated_at=analysis_generated_at,
+        analysis_source=analysis_source,
+        analysis_notice=analysis_notice,
+        missing_runs=missing_runs,
+        pair=pair,
+        evidence_map=evidence_map,
+    )
 
 
 # ------------------------------------------------------------- search ----

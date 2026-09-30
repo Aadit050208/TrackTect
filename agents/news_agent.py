@@ -2,6 +2,7 @@
 
 Fetches Google News RSS (no API key) and classifies each headline into
 funding / marketing campaign / partnership / product launch / engagement.
+Uses several targeted queries so thin categories get a real chance.
 Does not call the LLM — keeps Groq quota for summarize/classify/sections.
 """
 
@@ -54,7 +55,7 @@ _SIGNAL_KEYWORDS = {
 class NewsAgent:
     """Collect and classify recent news headlines for a competitor."""
 
-    def __init__(self, max_items: int = 8) -> None:
+    def __init__(self, max_items: int = 12) -> None:
         self.max_items = max_items
         self.last_error: Optional[str] = None
 
@@ -64,7 +65,6 @@ class NewsAgent:
         if not brand or brand.lower().startswith("http"):
             host = urlparse(url or "").netloc.replace("www.", "")
             brand = host.split(".")[0] if host else "company"
-        # Drop trailing junk like long ad titles
         brand = brand.split("?")[0][:60]
         return brand
 
@@ -76,14 +76,13 @@ class NewsAgent:
                 return signal
         return "other"
 
-    def _fetch_rss(self, query: str) -> List[Dict]:
-        # when:14d keeps results recent; hl/gl bias to English.
+    def _fetch_rss(self, query: str, limit: int = 6) -> List[Dict]:
         rss_url = (
             "https://news.google.com/rss/search?"
             f"q={quote_plus(query + ' when:14d')}&hl=en-US&gl=US&ceid=US:en"
         )
         try:
-            response = requests.get(rss_url, headers=_HEADERS, timeout=15)
+            response = requests.get(rss_url, headers=_HEADERS, timeout=20)
             response.raise_for_status()
         except requests.exceptions.RequestException as exc:
             self.last_error = f"news fetch failed ({exc.__class__.__name__})"
@@ -105,7 +104,6 @@ class NewsAgent:
             source = (source_el.text or "").strip() if source_el is not None else ""
             if not title:
                 continue
-            # Google titles often look like "Headline - Publisher"
             clean_title = re.sub(r"\s+-\s+[^-]+$", "", title).strip() or title
             signal = self.classify_headline(clean_title + " " + title)
             items.append({
@@ -116,20 +114,43 @@ class NewsAgent:
                 "summary": f"{source} · {pub}".strip(" ·") if source or pub else "",
                 "source": source,
             })
-            if len(items) >= self.max_items:
+            if len(items) >= limit:
                 break
         return items
 
     def fetch(self, competitor_name: str = "", url: str = "") -> List[Dict]:
-        """Return up to max_items news signals about the competitor."""
+        """Return up to max_items news signals — several targeted queries per run."""
         self.last_error = None
         brand = self._brand_query(competitor_name, url)
-        # Bias toward PM-relevant news without excluding general coverage.
-        query = f'{brand} (funding OR campaign OR partnership OR launch OR users OR marketing)'
-        items = self._fetch_rss(query)
-        if not items:
-            # Broader fallback
-            items = self._fetch_rss(brand)
-        if not items and not self.last_error:
+        queries = [
+            f'{brand} (funding OR campaign OR partnership OR launch OR users OR marketing)',
+            f'{brand} pricing',
+            f'{brand} hiring OR careers OR "open roles"',
+            f'{brand} partnership OR collaborat OR acquisition',
+        ]
+        seen_titles = set()
+        merged: List[Dict] = []
+        for query in queries:
+            for item in self._fetch_rss(query, limit=5):
+                key = (item.get("title") or "").lower()
+                if not key or key in seen_titles:
+                    continue
+                seen_titles.add(key)
+                merged.append(item)
+                if len(merged) >= self.max_items:
+                    break
+            if len(merged) >= self.max_items:
+                break
+
+        if not merged:
+            for item in self._fetch_rss(brand, limit=self.max_items):
+                key = (item.get("title") or "").lower()
+                if key and key not in seen_titles:
+                    seen_titles.add(key)
+                    merged.append(item)
+                if len(merged) >= self.max_items:
+                    break
+
+        if not merged and not self.last_error:
             self.last_error = "no recent news found"
-        return items
+        return merged[: self.max_items]

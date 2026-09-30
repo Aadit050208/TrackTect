@@ -14,14 +14,24 @@ logger = logging.getLogger(__name__)
 
 # kind → (url path fragments, link/text keywords)
 PAGE_KINDS = {
-    "pricing": (("/pricing", "/plans", "/price", "/subscription"), ("pricing", "plans", "price")),
+    "pricing": (
+        (
+            "/pricing", "/plans", "/price", "/subscription", "/packages",
+            "/buy", "/get-started", "/pricing-plans", "/plan", "/editions",
+        ),
+        ("pricing", "plans", "price", "packages", "editions", "buy now"),
+    ),
     "products": (
         ("/products", "/product", "/shop", "/store", "/collections", "/catalog", "/solutions", "/features"),
         ("products", "shop", "collections", "solutions", "features", "marketplace"),
     ),
     "careers": (
-        ("/careers", "/jobs", "/join", "/hiring", "/life-at", "/vacancies"),
-        ("careers", "jobs", "we're hiring", "join us", "open roles", "openings"),
+        (
+            "/careers", "/jobs", "/join", "/hiring", "/life-at", "/vacancies",
+            "/careers/jobs", "/careers/openings", "/careers/open-roles",
+            "/open-positions", "/open-roles", "/job-openings", "/join-us",
+        ),
+        ("careers", "jobs", "we're hiring", "join us", "open roles", "openings", "open positions"),
     ),
     "partners": (
         ("/partners", "/partner", "/ecosystem", "/integrations", "/alliance", "/collaborat"),
@@ -40,8 +50,17 @@ PAGE_KINDS = {
         ("sustainability", "impact", "esg", "carbon", "community", "giving back", "social responsibility"),
     ),
     "blog": (
-        ("/blog", "/news", "/press", "/articles", "/resources", "/updates"),
-        ("blog", "news", "press", "resources", "articles"),
+        ("/blog", "/articles", "/resources", "/updates", "/insights"),
+        ("blog", "resources", "articles", "insights", "updates"),
+    ),
+    "press": (
+        ("/press", "/news", "/newsroom", "/media", "/press-releases", "/company/news"),
+        ("press", "newsroom", "press release", "in the news", "media kit"),
+    ),
+    # Public review directory pages only — deep scan paraphrases themes, never quotes.
+    "reviews": (
+        (),  # discovered via search, not path guessing on the competitor host
+        ("g2.com", "capterra.com", "reviews"),
     ),
 }
 
@@ -153,6 +172,77 @@ def _iter_candidate_lines(text: str) -> List[str]:
     return lines
 
 
+_ROLE_TITLE = re.compile(
+    r"^(?:senior|junior|staff|principal|lead|head of|director of|vp of|manager[, ]+)?"
+    r"[\w][\w /&+]{2,60}$",
+    re.I,
+)
+_ROLE_SKIP = re.compile(
+    r"\b(cookie|privacy|subscribe|newsletter|apply now|learn more|view all|"
+    r"equal opportunity|benefits|culture|life at|we're hiring|we are hiring|"
+    r"open roles?|join our team|join the team|careers? at|see all jobs)\b",
+    re.I,
+)
+
+
+def _extract_open_roles(text: str, limit: int = 6) -> List[str]:
+    """Pull a few real open-role titles from careers/jobs page text."""
+    roles: List[str] = []
+    seen = set()
+    for raw in re.split(r"[\n\r•·|]+", text or ""):
+        cleaned = _clean_line(raw)
+        if not (8 <= len(cleaned) <= 80):
+            continue
+        if _ROLE_SKIP.search(cleaned):
+            continue
+        # Prefer lines that look like job titles
+        if not (
+            re.search(
+                r"\b(engineer|manager|designer|analyst|director|specialist|"
+                r"developer|marketer|sales|account|product|success|support|"
+                r"recruiter|ops|operations|finance|legal|intern)\b",
+                cleaned,
+                re.I,
+            )
+            or _ROLE_TITLE.match(cleaned)
+        ):
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        roles.append(cleaned)
+        if len(roles) >= limit:
+            break
+    return roles
+
+
+def _review_theme_summary(text: str, competitor_name: str = "") -> str:
+    """Paraphrase public review-directory themes — never quote review text."""
+    lower = (text or "").lower()
+    if not lower or len(lower) < 80:
+        return ""
+    themes = []
+    if any(w in lower for w in ("ease of use", "easy to use", "user friendly", "intuitive")):
+        themes.append("ease of use")
+    if any(w in lower for w in ("customer support", "support team", "responsive support")):
+        themes.append("support quality")
+    if any(w in lower for w in ("pricing", "value for money", "expensive", "affordable")):
+        themes.append("perceived value / pricing")
+    if any(w in lower for w in ("integration", "integrates", "api")):
+        themes.append("integrations")
+    if any(w in lower for w in ("implementation", "onboarding", "setup")):
+        themes.append("onboarding / implementation")
+    if not themes:
+        return ""
+    name = competitor_name or "This product"
+    return (
+        f"Public review directories often mention {name} around "
+        + ", ".join(themes[:3])
+        + " (paraphrased theme, not a quote)."
+    )
+
+
 class DeepScanAgent:
     """Scan all scraped pages for PM-relevant structured findings."""
 
@@ -178,7 +268,39 @@ class DeepScanAgent:
                 "impact": ("Impact / CSR",),
                 "about": ("Impact / CSR", "Partnership / Collab"),
                 "blog": ("New Product / Launch", "Partnership / Collab", "Impact / CSR"),
+                "press": ("Partnership / Collab", "New Product / Launch", "Discount / Offer"),
+                "reviews": ("User Engagement",),
             }.get(kind, ())
+
+            if kind == "careers":
+                for role in _extract_open_roles(text):
+                    entry = {
+                        "category": "Careers",
+                        "text": f"Open role: {role}"[:400],
+                        "severity": "medium",
+                        "confidence": 0.85,
+                        "triage_reason": f"Open role listed on careers page ({urlparse(url).path or '/'})",
+                        "needs_review": False,
+                        "roadmap_match": "",
+                        "source_url": url,
+                        "page_kind": kind,
+                    }
+                    buckets.setdefault("Careers", []).append(entry)
+
+            if kind == "reviews":
+                theme = _review_theme_summary(text, competitor_name)
+                if theme:
+                    buckets.setdefault("User Engagement", []).append({
+                        "category": "User Engagement",
+                        "text": theme[:400],
+                        "severity": "low",
+                        "confidence": 0.6,
+                        "triage_reason": f"Public review-directory theme ({urlparse(url).netloc})",
+                        "needs_review": True,
+                        "roadmap_match": "",
+                        "source_url": url,
+                        "page_kind": kind,
+                    })
 
             for line in _iter_candidate_lines(text):
                 lower = line.lower()

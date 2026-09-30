@@ -89,7 +89,7 @@ _CONTENT_FALLBACK_PATHS = (
 class ScraperAgent:
     """Fetch pages with requests + BeautifulSoup and return cleaned text."""
 
-    def __init__(self, timeout: int = 12, max_chars: int = 8000) -> None:
+    def __init__(self, timeout: int = 18, max_chars: int = 8000) -> None:
         self.timeout = timeout
         self.max_chars = max_chars
         self.errors: Dict[str, str] = {}

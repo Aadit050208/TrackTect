@@ -4,10 +4,11 @@
 {% block content_class %}wide{% endblock %}
 {% block content %}
 <h1>Compare</h1>
-<p class="dim" style="margin-bottom:18px">Pick 2–3 competitors to see recent changes side by side, grouped by category.</p>
+<p class="dim" style="margin-bottom:18px">Pick 2–3 competitors to see recent changes side by side, grouped by category. Pick two to also get a written head-to-head.</p>
 
 <div class="panel">
   <form method="POST">
+    <input type="hidden" name="intent" value="compare">
     <div class="compare-pick">
       {% for c in competitors %}
       <label class="checkbox-row">
@@ -24,6 +25,211 @@
     <button class="btn" type="submit" style="margin-top:14px">Compare</button>
   </form>
 </div>
+
+{% if pair and pair|length == 2 %}
+  {% set a = pair[0] %}
+  {% set b = pair[1] %}
+
+  {% if analysis_state == 'missing_runs' %}
+  <div class="panel compare-analysis">
+    <div class="empty">
+      <div>Need a completed check first</div>
+      <div class="hint">
+        {% for c in missing_runs %}
+          <div>
+            {{ c.name }} doesn’t have a completed check in the last {{ days }} days.
+            <a href="{{ url_for('competitor_detail', competitor_id=c.id) }}">Run a check</a>
+          </div>
+        {% endfor %}
+        A head-to-head is only useful once both companies have at least one finished check in this window.
+      </div>
+    </div>
+  </div>
+
+  {% elif analysis_state == 'need_generate' %}
+  <div class="panel compare-analysis">
+    <div class="compare-analysis-head">
+      <div class="compare-analysis-pair">
+        {{ favicon(a.url, a.name) }}
+        <span>{{ a.name }}</span>
+        <span class="vs">vs</span>
+        {{ favicon(b.url, b.name) }}
+        <span>{{ b.name }}</span>
+      </div>
+    </div>
+    <p class="dim">
+      We’ll compare recent changes, offers, messaging, news, and hiring signals for these two.
+      This uses <strong>1 of your remaining searches</strong> ({{ quota_left }} left).
+    </p>
+    <form method="POST" data-busy="1"
+          data-busy-title="Comparing these two…"
+          data-busy-detail="Reading stored changes and writing a side-by-side take. This can take a little while — hang tight.">
+      {% for cid in selected %}
+      <input type="hidden" name="competitor_ids" value="{{ cid }}">
+      {% endfor %}
+      <input type="hidden" name="days" value="{{ days }}">
+      <input type="hidden" name="intent" value="analyze">
+      <button class="btn" type="submit" data-busy-label="Comparing…"
+              {% if quota_left <= 0 %}disabled{% endif %}>
+        Write the head-to-head <span class="cost-badge-inline">uses 1 search</span>
+      </button>
+    </form>
+    {% if quota_left <= 0 %}
+    <p class="faint" style="margin-top:12px">{{ quota_label }}</p>
+    {% endif %}
+  </div>
+
+  {% elif analysis_state == 'ready' and analysis %}
+  <div class="panel compare-analysis">
+    <div class="compare-analysis-head">
+      <div class="compare-analysis-pair">
+        {{ favicon(a.url, a.name) }}
+        <span>{{ a.name }}</span>
+        <span class="vs">vs</span>
+        {{ favicon(b.url, b.name) }}
+        <span>{{ b.name }}</span>
+      </div>
+      <div class="compare-analysis-meta">
+        {% if analysis_generated_at %}
+        <span class="faint">Generated {{ analysis_generated_at | timeago }}</span>
+        {% endif %}
+        <form method="POST" data-busy="1"
+              data-busy-title="Refreshing this comparison…"
+              data-busy-detail="Re-reading the latest stored changes. This uses 1 search and can take a little while.">
+          {% for cid in selected %}
+          <input type="hidden" name="competitor_ids" value="{{ cid }}">
+          {% endfor %}
+          <input type="hidden" name="days" value="{{ days }}">
+          <input type="hidden" name="intent" value="regenerate">
+          <button class="btn ghost" type="submit" data-busy-label="Refreshing…"
+                  {% if quota_left <= 0 %}disabled{% endif %}>
+            Regenerate <span class="cost-badge-inline">uses 1 search</span>
+          </button>
+        </form>
+      </div>
+    </div>
+
+    {% if analysis_notice %}
+    <p class="faint" style="margin-top:0">{{ analysis_notice }}</p>
+    {% endif %}
+
+    <p class="compare-verdict">{{ analysis.verdict }}</p>
+
+    <div class="compare-dims">
+      {% for dim in analysis.dimensions %}
+      <div class="compare-dim">
+        <div class="compare-dim-head">
+          <span class="compare-dim-name">{{ dim.name }}</span>
+          {% if dim.edge == 'A' %}
+            <span class="chip">{{ a.name }} ahead</span>
+          {% elif dim.edge == 'B' %}
+            <span class="chip">{{ b.name }} ahead</span>
+          {% elif dim.edge == 'even' %}
+            <span class="chip">Even</span>
+          {% elif dim.edge == 'not_directly_comparable' %}
+            <span class="chip">Not directly comparable</span>
+          {% else %}
+            <span class="chip">Not enough data</span>
+          {% endif %}
+        </div>
+        <div class="compare-dim-cols">
+          <div>
+            <div class="faint">{{ a.name }}</div>
+            {% if dim.a_stronger_points %}
+            <ul>
+              {% for pt in dim.a_stronger_points %}
+              <li>{{ pt }}</li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="faint" style="margin:6px 0 0">No clear edge in the stored changes.</p>
+            {% endif %}
+          </div>
+          <div>
+            <div class="faint">{{ b.name }}</div>
+            {% if dim.b_stronger_points %}
+            <ul>
+              {% for pt in dim.b_stronger_points %}
+              <li>{{ pt }}</li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="faint" style="margin:6px 0 0">No clear edge in the stored changes.</p>
+            {% endif %}
+          </div>
+        </div>
+        {% if dim.evidence %}
+        <details class="diff-details" style="margin-top:8px">
+          <summary>Evidence</summary>
+          <div class="feed" style="margin-top:8px; border:none; background:transparent; box-shadow:none">
+            {% for ref in dim.evidence %}
+              {% set ev = evidence_map.get(ref) %}
+              <div class="feed-item">
+                <span class="dot low"></span>
+                <div class="body">
+                  <div class="line">
+                    {% if ev and ev.insight_id %}
+                    <a class="summary" href="{{ url_for('competitor_detail', competitor_id=ev.competitor_id) }}">{{ ev.text }}</a>
+                    {% elif ev and ev.competitor_id %}
+                    <a class="summary" href="{{ url_for('competitor_detail', competitor_id=ev.competitor_id) }}">{{ ev.text }}</a>
+                    {% elif ev %}
+                    <span class="summary">{{ ev.text }}</span>
+                    {% else %}
+                    <span class="summary">{{ ref }}</span>
+                    {% endif %}
+                  </div>
+                  {% if ev and ev.competitor_name %}
+                  <div class="meta">{{ ev.competitor_name }} · {{ ref }}</div>
+                  {% else %}
+                  <div class="meta">{{ ref }}</div>
+                  {% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <h2>What this means for a PM</h2>
+    <ul class="section-bullets">
+      {% for item in analysis.pm_takeaways %}
+      <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
+
+    <div class="compare-signals">
+      <h2>What this might signal <span class="faint">(inference, not confirmed)</span></h2>
+      {% if analysis.signals %}
+        {% for sig in analysis.signals %}
+        <div class="compare-signal">
+          <div class="compare-signal-head">
+            <span>{{ sig.hypothesis }}</span>
+            <span class="chip">{{ sig.confidence }} confidence</span>
+          </div>
+          {% if sig.evidence %}
+          <div class="meta faint" style="margin-top:6px">
+            {% for ref in sig.evidence %}
+              {% set ev = evidence_map.get(ref) %}
+              {% if ev and ev.competitor_id %}
+              <a href="{{ url_for('competitor_detail', competitor_id=ev.competitor_id) }}">{{ ref }}</a>{% if not loop.last %} · {% endif %}
+              {% else %}
+              {{ ref }}{% if not loop.last %} · {% endif %}
+              {% endif %}
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="faint">Not enough history yet to infer anything responsibly.</p>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+{% endif %}
 
 {% if data %}
 <div class="compare-grid">

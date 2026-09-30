@@ -75,8 +75,13 @@ class LLMClient:
         temperature: float = 0.4,
         max_tokens: int = 400,
         timeout: int = 90,
+        json_mode: bool = False,
     ) -> Optional[str]:
-        """Send one chat completion; return assistant text or None."""
+        """Send one chat completion; return assistant text or None.
+
+        json_mode: when True, request response_format json_object (OpenAI /
+        Groq-compatible). If the endpoint rejects it, retry once without it.
+        """
         global _last_call_at, _rate_limited_until
 
         if not self.configured:
@@ -94,16 +99,7 @@ class LLMClient:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": False,
-        }
+        use_json_mode = bool(json_mode)
 
         with _lock:
             gap = self.min_interval - (time.monotonic() - _last_call_at)
@@ -111,6 +107,19 @@ class LLMClient:
                 time.sleep(gap)
 
             for attempt in range(1, self.max_retries + 1):
+                payload = {
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stream": False,
+                }
+                if use_json_mode:
+                    payload["response_format"] = {"type": "json_object"}
+
                 try:
                     response = requests.post(
                         f"{self.base_url}/chat/completions",
@@ -135,11 +144,59 @@ class LLMClient:
                         time.sleep(sleep_s)
                         continue
 
+                    if response.status_code == 400 and use_json_mode:
+                        body_l = (response.text or "").lower()
+                        if "response_format" in body_l or "json_validate_failed" in body_l:
+                            # Endpoint rejected the format, or the model failed strict
+                            # JSON validation — retry once as plain text so we can repair.
+                            snippet = (response.text or "")[:400]
+                            logger.warning(
+                                "LLM JSON mode failed (%s); retrying without response_format. body=%s",
+                                response.status_code,
+                                snippet,
+                            )
+                            use_json_mode = False
+                            # Reasoning models often need more completion room after a
+                            # failed structured-output attempt.
+                            if max_tokens < 2500:
+                                max_tokens = 2500
+                            continue
+
                     response.raise_for_status()
                     data = response.json()
                     _record_tokens(data)
-                    content = data["choices"][0]["message"]["content"]
-                    return (content or "").strip()
+                    message = data["choices"][0]["message"]
+                    content = (message.get("content") or "").strip()
+                    if not content:
+                        reasoning = message.get("reasoning") or ""
+                        finish = data["choices"][0].get("finish_reason")
+                        usage = data.get("usage") or {}
+                        details = usage.get("completion_tokens_details") or {}
+                        logger.warning(
+                            "LLM returned empty content (finish=%s, "
+                            "completion_tokens=%s, reasoning_tokens=%s, "
+                            "reasoning_preview=%r)",
+                            finish,
+                            usage.get("completion_tokens"),
+                            details.get("reasoning_tokens"),
+                            (reasoning or "")[:200],
+                        )
+                        # Reasoning models sometimes spend the whole budget
+                        # on chain-of-thought; retry once with a larger cap
+                        # if we still have retries left.
+                        if (
+                            details.get("reasoning_tokens")
+                            and attempt < self.max_retries
+                            and max_tokens < 4000
+                        ):
+                            max_tokens = min(4000, max(max_tokens * 2, 2500))
+                            logger.warning(
+                                "Retrying LLM call with max_tokens=%s after empty content",
+                                max_tokens,
+                            )
+                            continue
+                        return None
+                    return content
 
                 except requests.exceptions.ConnectionError:
                     logger.warning("LLM endpoint unreachable at %s", self.base_url)
@@ -152,7 +209,23 @@ class LLMClient:
                     return None
                 except requests.exceptions.HTTPError as exc:
                     status = exc.response.status_code if exc.response is not None else "?"
-                    logger.warning("LLM HTTP error %s: %s", status, exc)
+                    body = ""
+                    if exc.response is not None:
+                        body = (exc.response.text or "")[:400]
+                    logger.warning("LLM HTTP error %s: %s %s", status, exc, body)
+                    if (
+                        status == 400
+                        and use_json_mode
+                        and (
+                            "response_format" in body.lower()
+                            or "json_validate_failed" in body.lower()
+                        )
+                    ):
+                        logger.warning(
+                            "LLM JSON mode failed; retrying without response_format"
+                        )
+                        use_json_mode = False
+                        continue
                     if status in (500, 502, 503) and attempt < self.max_retries:
                         time.sleep(2 * attempt)
                         continue

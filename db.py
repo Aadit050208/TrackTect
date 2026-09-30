@@ -215,6 +215,18 @@ CREATE TABLE IF NOT EXISTS messaging_snapshots (
     lines TEXT NOT NULL DEFAULT '[]',
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS compare_analyses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    competitor_a INTEGER NOT NULL,
+    competitor_b INTEGER NOT NULL,
+    days INTEGER NOT NULL,
+    analysis_json TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'ai',
+    created_at TEXT NOT NULL,
+    UNIQUE(user_id, competitor_a, competitor_b, days)
+);
 """
 
 # Columns added after the initial schema — applied idempotently on startup.
@@ -1557,6 +1569,243 @@ def search_changes(user_id: int, query: str, limit: int = 80) -> Dict[str, List[
                 "competitor_url": comps[row["competitor_id"]]["url"],
             })
     return grouped
+
+
+def _clip_text(text: str, limit: int = 180) -> str:
+    cleaned = " ".join((text or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1] + "…"
+
+
+def _pair_ids(a: int, b: int) -> tuple:
+    return (a, b) if a <= b else (b, a)
+
+
+def comparison_analysis_inputs(
+    competitor_ids: Sequence[int], days: int = 14, per_competitor: int = 15
+) -> Dict[int, Dict]:
+    """Capped head-to-head pack: insights, sections, news, messaging diffs — no page dumps."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    sev_rank = {"high": 0, "medium": 1, "low": 2}
+    result: Dict[int, Dict] = {}
+    with _connect() as conn:
+        for cid in competitor_ids:
+            comp = conn.execute("SELECT * FROM competitors WHERE id = ?", (cid,)).fetchone()
+            if not comp:
+                continue
+            ok_run = conn.execute(
+                """SELECT 1 AS ok FROM runs
+                   WHERE competitor_id = ? AND status = 'ok' AND started_at >= ?
+                   LIMIT 1""",
+                (cid, since),
+            ).fetchone()
+            insight_rows = [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT * FROM insights WHERE competitor_id = ? AND created_at >= ?
+                       ORDER BY created_at DESC LIMIT 80""",
+                    (cid, since),
+                ).fetchall()
+            ]
+            section_rows = [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT * FROM section_briefs
+                       WHERE competitor_id = ? AND created_at >= ?
+                       ORDER BY created_at DESC LIMIT 24""",
+                    (cid, since),
+                ).fetchall()
+            ]
+            news_rows = [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT * FROM news_signals
+                       WHERE competitor_id = ? AND created_at >= ?
+                       ORDER BY created_at DESC LIMIT 12""",
+                    (cid, since),
+                ).fetchall()
+            ]
+            diff_rows = [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT id, url, diff, created_at FROM diffs
+                       WHERE competitor_id = ? AND status = 'changed' AND created_at >= ?
+                       ORDER BY created_at DESC LIMIT 8""",
+                    (cid, since),
+                ).fetchall()
+            ]
+
+            candidates: List[Dict] = []
+            counts: Dict[str, Dict[str, int]] = {}
+            for ins in insight_rows:
+                sev = (ins.get("severity") or "low").lower()
+                cat = ins.get("category") or "Other"
+                bucket = counts.setdefault(cat, {"high": 0, "medium": 0, "low": 0})
+                if sev in bucket:
+                    bucket[sev] += 1
+                else:
+                    bucket["low"] += 1
+                candidates.append({
+                    "ref": f"i-{ins['id']}",
+                    "kind": "insight",
+                    "category": cat,
+                    "severity": sev,
+                    "text": _clip_text(ins.get("text") or ""),
+                    "reason": _clip_text(ins.get("triage_reason") or "", 120),
+                    "created_at": ins.get("created_at") or "",
+                    "insight_id": ins["id"],
+                })
+
+            seen_sections = set()
+            for row in section_rows:
+                sec = row.get("section") or "Other signals"
+                if sec in seen_sections:
+                    continue
+                seen_sections.add(sec)
+                try:
+                    bullets = json.loads(row.get("bullets") or "[]")
+                except (TypeError, ValueError):
+                    bullets = []
+                if isinstance(bullets, str):
+                    bullets = [bullets]
+                bullet_text = " | ".join(
+                    _clip_text(str(b), 80) for b in bullets[:3] if str(b).strip()
+                )
+                summary = _clip_text(row.get("summary") or "")
+                text = summary or bullet_text
+                if not text:
+                    continue
+                if bullet_text and summary:
+                    text = _clip_text(f"{summary} {bullet_text}", 220)
+                candidates.append({
+                    "ref": f"s-{row['id']}",
+                    "kind": "section",
+                    "category": sec,
+                    "severity": "medium",
+                    "text": text,
+                    "reason": "",
+                    "created_at": row.get("created_at") or "",
+                })
+
+            for row in news_rows:
+                title = _clip_text(row.get("title") or "")
+                summary = _clip_text(row.get("summary") or "", 120)
+                text = title if not summary else _clip_text(f"{title} — {summary}", 200)
+                if not text:
+                    continue
+                candidates.append({
+                    "ref": f"n-{row['id']}",
+                    "kind": "news",
+                    "category": row.get("signal_type") or "news",
+                    "severity": "medium",
+                    "text": text,
+                    "reason": "",
+                    "created_at": row.get("created_at") or "",
+                })
+
+            for row in diff_rows:
+                try:
+                    lines = json.loads(row.get("diff") or "[]")
+                except (TypeError, ValueError):
+                    lines = []
+                snippets = []
+                for ln in lines:
+                    s = str(ln).strip()
+                    if s.startswith(("+++", "---", "@@")):
+                        continue
+                    if s.startswith(("+", "-")) and len(s) > 2:
+                        snippets.append(_clip_text(s, 100))
+                    if len(snippets) >= 4:
+                        break
+                if not snippets:
+                    continue
+                url = row.get("url") or ""
+                host = url.split("//")[-1].split("/")[0] if url else "page"
+                candidates.append({
+                    "ref": f"m-{row['id']}",
+                    "kind": "messaging",
+                    "category": "UX & Messaging",
+                    "severity": "medium",
+                    "text": _clip_text(f"{host}: " + " · ".join(snippets), 220),
+                    "reason": "",
+                    "created_at": row.get("created_at") or "",
+                })
+
+            candidates.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+            candidates.sort(key=lambda x: sev_rank.get((x.get("severity") or "low").lower(), 3))
+            # Dimension-aware selection: guarantee careers/hiring etc. aren't starved
+            # by a global severity cut. News/sections compete in the same budget.
+            from compare_analysis import select_balanced_items
+
+            items = select_balanced_items(
+                candidates,
+                budget=max(1, int(per_competitor)),
+                per_dimension=2,
+                company_label=comp["name"] or str(cid),
+            )
+            latest = insight_rows[0]["created_at"] if insight_rows else None
+            result[int(cid)] = {
+                "competitor": dict(comp),
+                "has_completed_run": bool(ok_run),
+                "items": items,
+                "counts": counts,
+                "latest_insight_at": latest,
+                "insight_count": len(insight_rows),
+            }
+    return result
+
+
+def comparison_insights_mtime(competitor_ids: Sequence[int], days: int = 14) -> Optional[str]:
+    """Newest insight timestamp in the window for these competitors, or None."""
+    ids = [int(x) for x in competitor_ids]
+    if len(ids) < 2:
+        return None
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    placeholders = ",".join("?" * len(ids))
+    with _connect() as conn:
+        row = conn.execute(
+            f"""SELECT MAX(created_at) AS t FROM insights
+                WHERE competitor_id IN ({placeholders}) AND created_at >= ?""",
+            (*ids, since),
+        ).fetchone()
+    stamp = row["t"] if row else None
+    return stamp or None
+
+
+def get_compare_analysis(user_id: int, competitor_a: int, competitor_b: int, days: int) -> Optional[Dict]:
+    lo, hi = _pair_ids(int(competitor_a), int(competitor_b))
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT * FROM compare_analyses
+               WHERE user_id = ? AND competitor_a = ? AND competitor_b = ? AND days = ?""",
+            (int(user_id), lo, hi, int(days)),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_compare_analysis(
+    user_id: int,
+    competitor_a: int,
+    competitor_b: int,
+    days: int,
+    analysis_json: str,
+    source: str = "ai",
+) -> str:
+    lo, hi = _pair_ids(int(competitor_a), int(competitor_b))
+    now = _now()
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO compare_analyses
+               (user_id, competitor_a, competitor_b, days, analysis_json, source, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, competitor_a, competitor_b, days) DO UPDATE SET
+                 analysis_json = excluded.analysis_json,
+                 source = excluded.source,
+                 created_at = excluded.created_at""",
+            (int(user_id), lo, hi, int(days), analysis_json, source or "ai", now),
+        )
+    return now
 
 
 def comparison_data(competitor_ids: Sequence[int], days: int = 14) -> Dict[str, Dict[str, List[Dict]]]:

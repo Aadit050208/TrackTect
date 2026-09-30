@@ -1420,6 +1420,92 @@ body.light .auth-net-sweep {
 .compare-col .feed { border: none; background: transparent; box-shadow: none; }
 .compare-col .feed-item { padding-left: 0; padding-right: 0; }
 
+.compare-analysis { margin-top: 8px; margin-bottom: 18px; }
+.compare-analysis-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.compare-analysis-pair {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  min-width: 0;
+}
+.compare-analysis-pair .vs {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+.compare-analysis-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.compare-verdict {
+  margin: 0 0 8px;
+  line-height: 1.55;
+}
+.compare-dim {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.compare-dim-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.compare-dim-name { font-weight: 600; font-size: 0.92rem; }
+.compare-dim-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.compare-dim-cols ul {
+  margin: 6px 0 0;
+  padding-left: 1.1em;
+  font-size: 0.88rem;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+.compare-dim-cols li { margin-bottom: 4px; }
+.compare-signals {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.compare-signals h2 {
+  color: var(--text-dim);
+  font-size: 1rem;
+}
+.compare-signal {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+.compare-signal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+@media (max-width: 700px) {
+  .compare-dim-cols { grid-template-columns: 1fr; }
+}
+
 /* ---------- first-run welcome (empty overview) ---------- */
 
 .sr-only {
