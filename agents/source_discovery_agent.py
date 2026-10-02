@@ -9,6 +9,7 @@ same run's deep scrape covers them.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Dict, List, Set
 from urllib.parse import urljoin, urlparse
 
@@ -36,6 +37,9 @@ _AUTO_TRACK_KINDS = {
     "about", "impact", "blog", "press", "reviews",
 }
 _MAX_AUTO_EXTRAS = 14
+# All supplement queries share this ceiling so stacked search timeouts cannot
+# blow past gunicorn's worker limit. Path/link discovery is not included.
+_SUPPLEMENT_BUDGET_SECONDS = 35
 # LinkedIn company pages require login for useful content — skip rather than
 # work around access restrictions (terms).
 _SKIP_DISCOVERY_HOSTS = (
@@ -77,8 +81,15 @@ class SourceDiscoveryAgent:
                     break
 
         # 3) Explicit web search for thin / external kinds (pricing, careers, press, reviews).
+        # Failures here must not drop sources already found via paths and homepage links.
         brand = self._brand_name(competitor_id, homepage_url)
-        found.extend(self._search_supplement(brand, host, found))
+        try:
+            found.extend(self._search_supplement(brand, host, found))
+        except Exception:
+            logger.exception(
+                "Search supplement failed; continuing with %s source(s) already found",
+                len(found),
+            )
 
         already = set(u.rstrip("/") for u in db.get_extra_sources(competitor_id))
         already.add(homepage_url.rstrip("/"))
@@ -141,10 +152,15 @@ class SourceDiscoveryAgent:
     def _search_supplement(
         self, brand: str, host: str, already: List[Dict]
     ) -> List[Dict]:
-        """Extra discovery via the existing search provider — failures are skipped."""
+        """Extra discovery via the existing search provider — failures are skipped.
+
+        Stops once the shared time budget is used, and returns whatever was found.
+        """
         have: Set[str] = {f["kind"] for f in already}
         have_urls = {f["url"].rstrip("/") for f in already}
         extras: List[Dict] = []
+        deadline = time.monotonic() + _SUPPLEMENT_BUDGET_SECONDS
+        stopped_early = False
 
         queries = []
         if "pricing" not in have:
@@ -160,10 +176,13 @@ class SourceDiscoveryAgent:
         queries.append(("reviews", f"{brand} site:capterra.com"))
 
         for kind, query in queries:
+            if time.monotonic() >= deadline:
+                stopped_early = True
+                break
             if kind in have and kind != "pricing":
                 continue
             try:
-                hits = discover_source(query, limit=3) or []
+                hits = discover_source(query, limit=3, deadline=deadline) or []
             except Exception:
                 logger.warning("Search supplement failed for %s (%s)", kind, query[:60])
                 continue
@@ -183,6 +202,9 @@ class SourceDiscoveryAgent:
                     path = urlparse(url).path.lower()
                     if not any(p in path for p in ("/products/", "/software/", "/p/")):
                         continue
+                if time.monotonic() >= deadline:
+                    stopped_early = True
+                    break
                 try:
                     alive = self._looks_alive(url)
                 except Exception:
@@ -193,6 +215,13 @@ class SourceDiscoveryAgent:
                 have.add(kind)
                 have_urls.add(url)
                 break
+            if stopped_early:
+                break
+        if stopped_early:
+            logger.warning(
+                "Source discovery time budget reached; proceeding with %s sources found",
+                len(already) + len(extras),
+            )
         return extras
 
     def _looks_alive(self, url: str) -> bool:

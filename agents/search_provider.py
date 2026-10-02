@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Dict, List, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -24,6 +25,10 @@ from bs4 import BeautifulSoup
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+# A reachable search API answers well inside this. A blocked one fails over faster
+# instead of stacking 12–15s timeouts across every provider.
+_SEARCH_TIMEOUT = 6
 
 _HEADERS = {
     "User-Agent": (
@@ -41,21 +46,43 @@ _SKIP_HOSTS = (
 )
 
 
-def discover_source(query: str, limit: int = 5) -> List[Dict]:
-    """Return search hits: [{title, url, snippet}, ...]. Never raises."""
+def _past_deadline(deadline: Optional[float]) -> bool:
+    return deadline is not None and time.monotonic() >= deadline
+
+
+def discover_source(
+    query: str, limit: int = 5, deadline: Optional[float] = None
+) -> List[Dict]:
+    """Return search hits: [{title, url, snippet}, ...]. Never raises.
+
+    deadline: optional monotonic timestamp. Providers not yet started are skipped
+    once it passes, so one query cannot keep burning timeouts after a caller budget.
+    """
     provider = (settings.search_provider or "duckduckgo").lower()
     results: List[Dict] = []
     try:
-        results.extend(_search_clearbit(query, limit=limit))
-        results.extend(_search_ddg_instant(query, limit=limit))
-        results.extend(_search_wikipedia(query, limit=limit))
-
+        steps = [
+            ("clearbit", lambda: _search_clearbit(query, limit=limit)),
+            ("ddg_instant", lambda: _search_ddg_instant(query, limit=limit)),
+            ("wikipedia", lambda: _search_wikipedia(query, limit=limit, deadline=deadline)),
+        ]
         if provider in ("brave", "brave_api"):
-            results.extend(_search_brave(query, limit=limit))
+            steps.append(("brave", lambda: _search_brave(query, limit=limit)))
         elif provider == "custom" and settings.search_base_url:
-            results.extend(_search_custom(query, limit=limit))
+            steps.append(("custom", lambda: _search_custom(query, limit=limit)))
 
-        if len([r for r in results if r.get("source") != "wikipedia"]) < 2:
+        for name, fn in steps:
+            if _past_deadline(deadline):
+                logger.info(
+                    "Search deadline reached; skipping %s and any later providers", name
+                )
+                break
+            results.extend(fn())
+
+        if (
+            not _past_deadline(deadline)
+            and len([r for r in results if r.get("source") != "wikipedia"]) < 2
+        ):
             results.extend(_search_ddg_html(query, limit=limit))
 
         seen = set()
@@ -99,7 +126,7 @@ def _search_clearbit(query: str, limit: int = 5) -> List[Dict]:
             "https://autocomplete.clearbit.com/v1/companies/suggest",
             params={"query": q},
             headers=_HEADERS,
-            timeout=10,
+            timeout=_SEARCH_TIMEOUT,
         )
         response.raise_for_status()
         rows = response.json()
@@ -165,7 +192,7 @@ def _search_ddg_instant(query: str, limit: int = 5) -> List[Dict]:
             "https://api.duckduckgo.com/",
             params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
             headers=_HEADERS,
-            timeout=12,
+            timeout=_SEARCH_TIMEOUT,
         )
         response.raise_for_status()
         data = response.json()
@@ -220,7 +247,7 @@ def _search_ddg_html(query: str, limit: int = 5) -> List[Dict]:
             "https://html.duckduckgo.com/html/",
             params={"q": f"{query} official website"},
             headers=_HEADERS,
-            timeout=15,
+            timeout=_SEARCH_TIMEOUT,
         )
         response.raise_for_status()
     except requests.exceptions.RequestException as exc:
@@ -256,7 +283,9 @@ def _search_ddg_html(query: str, limit: int = 5) -> List[Dict]:
     return out
 
 
-def _search_wikipedia(query: str, limit: int = 5) -> List[Dict]:
+def _search_wikipedia(
+    query: str, limit: int = 5, deadline: Optional[float] = None
+) -> List[Dict]:
     out: List[Dict] = []
     try:
         response = requests.get(
@@ -269,7 +298,7 @@ def _search_wikipedia(query: str, limit: int = 5) -> List[Dict]:
                 "format": "json",
             },
             headers={**_HEADERS, "Api-User-Agent": "TrackTect/1.0 (competitor research)"},
-            timeout=12,
+            timeout=_SEARCH_TIMEOUT,
         )
         response.raise_for_status()
         payload = response.json()
@@ -286,7 +315,9 @@ def _search_wikipedia(query: str, limit: int = 5) -> List[Dict]:
             "snippet": f"Wikipedia: {title}",
             "source": "wikipedia",
         })
-        official = _wikipedia_official_website(title)
+        if _past_deadline(deadline):
+            break
+        official = _wikipedia_official_website(title, deadline=deadline)
         if official:
             out.insert(0, {
                 "title": f"{title} official website",
@@ -297,7 +328,9 @@ def _search_wikipedia(query: str, limit: int = 5) -> List[Dict]:
     return out[: limit + 2]
 
 
-def _wikipedia_official_website(title: str) -> Optional[str]:
+def _wikipedia_official_website(
+    title: str, deadline: Optional[float] = None
+) -> Optional[str]:
     prefer = title
     if title.lower() in ("amazon", "apple", "meta", "oracle", "target"):
         prefer = f"{title} (company)"
@@ -313,7 +346,7 @@ def _wikipedia_official_website(title: str) -> Optional[str]:
                 "redirects": 1,
             },
             headers={**_HEADERS, "Api-User-Agent": "TrackTect/1.0 (competitor research)"},
-            timeout=10,
+            timeout=_SEARCH_TIMEOUT,
         )
         response.raise_for_status()
         pages = (response.json().get("query") or {}).get("pages") or {}
@@ -322,13 +355,13 @@ def _wikipedia_official_website(title: str) -> Optional[str]:
             qid = (page.get("pageprops") or {}).get("wikibase_item")
             if qid:
                 break
-        if not qid:
+        if not qid or _past_deadline(deadline):
             return None
 
         wd = requests.get(
             f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json",
             headers=_HEADERS,
-            timeout=10,
+            timeout=_SEARCH_TIMEOUT,
         )
         wd.raise_for_status()
         entity = (wd.json().get("entities") or {}).get(qid) or {}
@@ -356,7 +389,7 @@ def _search_brave(query: str, limit: int = 5) -> List[Dict]:
             "X-Subscription-Token": settings.search_api_key,
         },
         params={"q": query, "count": limit},
-        timeout=15,
+        timeout=_SEARCH_TIMEOUT,
     )
     response.raise_for_status()
     data = response.json()
@@ -381,7 +414,7 @@ def _search_custom(query: str, limit: int = 5) -> List[Dict]:
         settings.search_base_url,
         headers=headers,
         params={"q": query, "limit": limit},
-        timeout=15,
+        timeout=_SEARCH_TIMEOUT,
     )
     response.raise_for_status()
     data = response.json()
