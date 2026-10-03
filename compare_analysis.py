@@ -46,6 +46,8 @@ _CAT_TO_DIM = {
     "partnership": "Partnerships",
     "marketing_campaign": "Marketing & campaigns",
     "product_launch": "Products & features",
+    "hiring": "Hiring & careers",
+    "app_update": "Products & features",
 }
 
 # Meta / non-comparable phrasing (pricing hidden, "no changes", thin notes).

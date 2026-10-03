@@ -58,12 +58,6 @@ _BUSINESS_CONTEXT = (
     "introduced",
 )
 
-# Clear public aliases. Only used as extra phrases, never as a substitute for
-# a longer registered name when the alias itself is ambiguous.
-_BRAND_ALIASES = {
-    "marks & spencer": ("m&s",),
-}
-
 # A token glued on with a hyphen, or these next words, names a different entity
 # ("Hermes-Epitek", "Hermes Award", "Hermes Agent").
 _OTHER_ENTITY_NEXT = frozenset({"award", "awards", "agent", "agents"})
@@ -115,9 +109,6 @@ def _match_phrases(brand: str) -> List[str]:
     core_phrase = " ".join(core)
     if core_phrase != phrase and not _is_ambiguous_token(core_phrase):
         phrases.append(core_phrase)
-    for alias in _BRAND_ALIASES.get(phrase, ()):
-        if alias not in phrases:
-            phrases.append(alias)
     return phrases
 
 
@@ -216,12 +207,9 @@ def headline_is_about_company(brand: str, title: str) -> tuple:
         if _followed_by_other_name(title, full, strict=False):
             return False, "different_entity"
         return True, "exact_name"
-    aliases = set(_BRAND_ALIASES.get(full, ()))
     for phrase in phrases[1:]:
         if not _phrase_in(lowered, phrase):
             continue
-        if phrase in aliases:
-            return True, "alias"
         if " " not in phrase and _is_ambiguous_token(phrase):
             continue
         return True, "distinctive_core"

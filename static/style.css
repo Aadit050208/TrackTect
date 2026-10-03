@@ -178,6 +178,7 @@ code {
 }
 
 .brand {
+  position: relative;
   font-family: var(--display);
   font-weight: 700;
   font-size: 1.45rem;
@@ -219,10 +220,12 @@ body:not(.light) .brand-logo {
   font-weight: 500;
   border: 1px solid transparent;
   margin-bottom: 2px;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
 }
 .side-link:hover, .side-item:hover {
   background: var(--surface-2);
   color: var(--text) !important;
+  transform: translateX(2px);
 }
 .side-link.active, .side-item.active {
   background: var(--accent-soft);
@@ -307,6 +310,7 @@ body:not(.light) .brand-logo {
   color: var(--text-dim) !important;
   font-size: 13px;
   font-weight: 500;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 .nav-tabs a:hover { color: var(--text) !important; background: var(--surface-2); }
 .nav-tabs a.active {
@@ -712,7 +716,7 @@ body:not(.light) .chip.cat-impact { color: #6ee7b7; }
   gap: 12px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
-  transition: background 0.2s ease, transform 0.2s var(--ease-out);
+  transition: background 0.12s ease;
 }
 .feed-item:last-child { border-bottom: none; }
 .feed-item:hover { background: var(--surface-2); }
@@ -2440,4 +2444,47 @@ body:not(.light) .welcome-brand > span {
 .welcome-go {
   background: var(--grad) !important;
   background-size: 160% 160% !important;
+}
+
+/* Logo sparkle and a single shine on primary buttons. Idle until hover. */
+.brand-spark {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 6px var(--accent-2);
+  opacity: 0;
+  pointer-events: none;
+}
+.brand-spark.s1 { left: 22px; top: 8px; }
+.brand-spark.s2 { left: 14px; top: 4px; }
+.brand-spark.s3 { left: 30px; top: 18px; }
+.brand:hover .brand-spark { animation: brand-spark 0.65s ease-out; }
+.brand:hover .brand-spark.s2 { animation-delay: 0.08s; }
+.brand:hover .brand-spark.s3 { animation-delay: 0.14s; }
+@keyframes brand-spark {
+  0% { opacity: 0; transform: scale(0.4); }
+  35% { opacity: 1; }
+  100% { opacity: 0; transform: translate(5px, -7px) scale(1); }
+}
+
+.btn:not(.ghost):not(.danger-ghost) { position: relative; overflow: hidden; }
+.btn:not(.ghost):not(.danger-ghost)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 38%, rgba(255, 255, 255, 0.38) 50%, transparent 62%);
+  transform: translateX(-130%);
+  pointer-events: none;
+}
+.btn:not(.ghost):not(.danger-ghost):hover::after {
+  transform: translateX(130%);
+  transition: transform 0.4s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-spark,
+  .btn:not(.ghost):not(.danger-ghost)::after { animation: none !important; transition: none !important; }
+  .side-link:hover, .side-item:hover { transform: none; }
 }

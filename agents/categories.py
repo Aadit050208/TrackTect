@@ -65,5 +65,10 @@ SIGNAL_LABELS = {
     "partnership": "Partnership",
     "product_launch": "Product launch",
     "engagement": "User engagement",
+    "hiring": "Open role",
+    "filing": "Filing",
+    "app_update": "App update",
+    "status": "Status",
+    "review_theme": "Review theme",
     "other": "News",
 }

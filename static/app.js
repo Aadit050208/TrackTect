@@ -260,6 +260,38 @@ document.addEventListener('click', function (event) {
   window.location.href = '/insights/' + encodeURIComponent(id) + '/ticket';
 });
 
+/* Quiet click on primary buttons and navigation. No hover sound. */
+(function () {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  var ctx = null;
+  function blip() {
+    try {
+      var AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      ctx = ctx || new AudioCtx();
+      if (ctx.state === 'suspended') ctx.resume();
+      var now = ctx.currentTime;
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(740, now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.035, now + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.07);
+    } catch (e) {}
+  }
+  document.addEventListener('click', function (event) {
+    var el = event.target.closest('.btn, .side-link, .nav-tabs a');
+    if (!el) return;
+    if (el.classList.contains('ghost') || el.classList.contains('danger-ghost')) return;
+    blip();
+  });
+})();
+
 /* Confirm before quota-consuming actions */
 document.addEventListener('click', function (event) {
   var el = event.target.closest('[data-cost]');

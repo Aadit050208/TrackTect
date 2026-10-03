@@ -20,6 +20,7 @@ from agents.classifier_agent import ClassifierAgent
 from agents.deep_scan_agent import DeepScanAgent
 from agents.landing_page_agent import LandingPageWatcherAgent
 from agents.news_agent import NewsAgent
+from agents.public_records_agent import PublicRecordsAgent
 from agents.notion_agent import NotionAgent
 from agents.orchestrator_agent import OrchestratorAgent
 from agents.pattern_agent import PatternDetectionAgent
@@ -51,6 +52,7 @@ class PipelineRunner:
         self.deep_scan = DeepScanAgent()
         self.landing_watcher = LandingPageWatcherAgent()
         self.news_agent = NewsAgent()
+        self.public_records = PublicRecordsAgent()
         self.pattern_agent = PatternDetectionAgent()
         self.source_discovery = SourceDiscoveryAgent()
         self.adaptive_frequency = AdaptiveFrequencyAgent()
@@ -370,6 +372,38 @@ class PipelineRunner:
                 log("News agent failed; continuing")
         else:
             status["news"] = {"status": "skipped", "message": "skipped by planner"}
+
+        # 7c) Public records — feeds, jobs, apps, filings. HTTP only, time-boxed.
+        try:
+            records = self.public_records.collect(name, url)
+            if records:
+                have = {(item.get("title") or "").lower() for item in news_items}
+                added = []
+                for item in records:
+                    key = (item.get("title") or "").lower()
+                    if key and key not in have:
+                        have.add(key)
+                        added.append(item)
+                news_items.extend(added)
+                status["records"] = {
+                    "status": "ok",
+                    "message": f"{len(added)} public record(s)",
+                }
+                for item in added[:6]:
+                    log(f"   📄 {item.get('title', '')[:120]}")
+            else:
+                status["records"] = {
+                    "status": "warn",
+                    "message": self.public_records.last_note or "no public records found",
+                }
+                log(f"Public records: {self.public_records.last_note or 'none found'}")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Public records failed")
+            status["records"] = {
+                "status": "error",
+                "message": f"records crashed ({exc.__class__.__name__})",
+            }
+            log("Public records failed; continuing")
 
         # 8) Notion
         if plan["run_notion"] and (insights or sections or news_items):
